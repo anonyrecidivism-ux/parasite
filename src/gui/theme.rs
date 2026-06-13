@@ -20,6 +20,19 @@ impl NodeShape {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UiVariant { Standard, Compact, Focus }
+
+impl UiVariant {
+    pub const ALL: [UiVariant; 3] = [UiVariant::Standard, UiVariant::Compact, UiVariant::Focus];
+    pub fn label(self) -> &'static str {
+        match self { UiVariant::Standard=>"Standard", UiVariant::Compact=>"Compact", UiVariant::Focus=>"Focus (no palette)" }
+    }
+    pub fn palette_width(self) -> f32 { match self { UiVariant::Compact=>166.0, _=>210.0 } }
+    pub fn details_width(self) -> f32 { match self { UiVariant::Compact=>234.0, UiVariant::Focus=>280.0, UiVariant::Standard=>290.0 } }
+    pub fn show_palette(self) -> bool { self != UiVariant::Focus }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BgStyle { Grid, Dots, Plain }
 
 impl BgStyle {
@@ -63,6 +76,7 @@ pub struct UiConfig {
     pub node_shape:  NodeShape,
     pub edge_curved: bool,
     pub bg_style:    BgStyle,
+    pub variant:     UiVariant,
 }
 
 impl Default for UiConfig {
@@ -70,6 +84,7 @@ impl Default for UiConfig {
         Self {
             node_radius: 22.0, show_grid: true, edge_labels: true, font_scale: 1.0,
             node_shape: NodeShape::Circle, edge_curved: false, bg_style: BgStyle::Grid,
+            variant: UiVariant::Standard,
         }
     }
 }
@@ -84,6 +99,11 @@ pub const THEMES: &[(&str, fn() -> Palette)] = &[
     ("Dracula",   dracula),
     ("Nord",      nord),
     ("Solarized", solarized),
+    ("Cyberpunk", cyberpunk),
+    ("Ocean",     ocean),
+    ("Rosé",      rose),
+    ("Amber",     amber),
+    ("Mono",      mono),
     ("Light",     light),
 ];
 
@@ -169,6 +189,71 @@ pub fn solarized() -> Palette {
     }
 }
 
+pub fn cyberpunk() -> Palette {
+    Palette {
+        dark: true,
+        bg_app: rgb(13,11,20), bg_panel: rgb(20,16,32), bg_sidebar: rgb(9,8,15),
+        bg_canvas: rgb(11,9,18), bg_item_sel: rgb(40,20,55), bg_item_hov: rgb(28,18,42),
+        bg_input: rgb(26,18,40), bg_output: rgb(7,6,12),
+        accent: rgb(255,60,172), accent_dark: rgb(150,30,100), accent_hov: rgb(255,110,200),
+        text_pri: rgb(230,225,245), text_sec: rgb(120,210,230), text_mut: rgb(90,70,120),
+        border: rgb(48,30,70), grid: rgb(30,20,46),
+        c_ok: rgb(60,240,180), c_err: rgb(255,70,110), c_warn: rgb(245,220,70), c_info: rgb(90,200,255),
+    }
+}
+
+pub fn ocean() -> Palette {
+    Palette {
+        dark: true,
+        bg_app: rgb(8,22,30), bg_panel: rgb(12,30,40), bg_sidebar: rgb(6,18,25),
+        bg_canvas: rgb(9,25,34), bg_item_sel: rgb(20,52,66), bg_item_hov: rgb(15,40,52),
+        bg_input: rgb(14,38,50), bg_output: rgb(5,15,21),
+        accent: rgb(64,196,200), accent_dark: rgb(36,120,124), accent_hov: rgb(110,220,224),
+        text_pri: rgb(220,238,240), text_sec: rgb(120,165,175), text_mut: rgb(64,98,108),
+        border: rgb(26,58,70), grid: rgb(16,40,50),
+        c_ok: rgb(90,200,150), c_err: rgb(225,95,95), c_warn: rgb(230,190,90), c_info: rgb(96,180,220),
+    }
+}
+
+pub fn rose() -> Palette {
+    Palette {
+        dark: true,
+        bg_app: rgb(26,16,20), bg_panel: rgb(34,21,26), bg_sidebar: rgb(20,12,15),
+        bg_canvas: rgb(22,14,18), bg_item_sel: rgb(56,30,38), bg_item_hov: rgb(42,24,30),
+        bg_input: rgb(40,24,30), bg_output: rgb(16,10,12),
+        accent: rgb(244,114,150), accent_dark: rgb(160,64,90), accent_hov: rgb(250,150,180),
+        text_pri: rgb(244,228,234), text_sec: rgb(180,140,152), text_mut: rgb(110,76,86),
+        border: rgb(58,34,42), grid: rgb(40,24,30),
+        c_ok: rgb(150,200,130), c_err: rgb(230,90,100), c_warn: rgb(235,180,100), c_info: rgb(190,150,220),
+    }
+}
+
+pub fn amber() -> Palette {
+    Palette {
+        dark: true,
+        bg_app: rgb(22,18,10), bg_panel: rgb(30,24,13), bg_sidebar: rgb(16,13,7),
+        bg_canvas: rgb(19,15,9), bg_item_sel: rgb(52,40,16), bg_item_hov: rgb(38,30,14),
+        bg_input: rgb(36,28,14), bg_output: rgb(13,10,6),
+        accent: rgb(245,180,60), accent_dark: rgb(160,116,32), accent_hov: rgb(255,200,100),
+        text_pri: rgb(244,236,216), text_sec: rgb(176,158,118), text_mut: rgb(104,90,60),
+        border: rgb(58,46,22), grid: rgb(40,32,16),
+        c_ok: rgb(150,190,90), c_err: rgb(228,110,70), c_warn: rgb(240,200,80), c_info: rgb(150,180,210),
+    }
+}
+
+pub fn mono() -> Palette {
+    Palette {
+        dark: true,
+        bg_app: rgb(18,18,18), bg_panel: rgb(26,26,26), bg_sidebar: rgb(12,12,12),
+        bg_canvas: rgb(15,15,15), bg_item_sel: rgb(46,46,46), bg_item_hov: rgb(34,34,34),
+        bg_input: rgb(32,32,32), bg_output: rgb(10,10,10),
+        accent: rgb(220,220,220), accent_dark: rgb(120,120,120), accent_hov: rgb(245,245,245),
+        text_pri: rgb(235,235,235), text_sec: rgb(150,150,150), text_mut: rgb(90,90,90),
+        border: rgb(48,48,48), grid: rgb(32,32,32),
+        c_ok: rgb(150,200,150), c_err: rgb(210,110,110), c_warn: rgb(220,200,120), c_info: rgb(140,170,210),
+    }
+}
+
 pub fn light() -> Palette {
     Palette {
         dark: false,
@@ -203,6 +288,7 @@ pub fn bg_input()    -> Color32 { current().bg_input }
 pub fn bg_output()   -> Color32 { current().bg_output }
 pub fn accent()      -> Color32 { current().accent }
 pub fn accent_dark() -> Color32 { current().accent_dark }
+#[allow(dead_code)]
 pub fn accent_hov()  -> Color32 { current().accent_hov }
 pub fn text_pri()    -> Color32 { current().text_pri }
 pub fn text_sec()    -> Color32 { current().text_sec }
@@ -220,6 +306,7 @@ pub fn edge_labels() -> bool      { config().edge_labels }
 pub fn node_shape()  -> NodeShape { config().node_shape }
 pub fn edge_curved() -> bool      { config().edge_curved }
 pub fn bg_style()    -> BgStyle   { config().bg_style }
+pub fn variant()     -> UiVariant { config().variant }
 
 /// Install fonts once (idempotent enough to call again is fine).
 pub fn setup_fonts(ctx: &egui::Context) {
@@ -270,13 +357,15 @@ pub fn apply(ctx: &egui::Context) {
         (egui::TextStyle::Button,    FontId::new(13.5 * s, FontFamily::Proportional)),
         (egui::TextStyle::Monospace, FontId::new(12.5 * s, FontFamily::Monospace)),
     ].into();
-    style.spacing.item_spacing   = Vec2::new(8.0, 6.0);
-    style.spacing.button_padding = Vec2::new(10.0, 5.0);
+    let compact = config().variant == UiVariant::Compact;
+    style.spacing.item_spacing   = if compact { Vec2::new(6.0, 3.0) } else { Vec2::new(8.0, 6.0) };
+    style.spacing.button_padding = if compact { Vec2::new(7.0, 3.0) } else { Vec2::new(10.0, 5.0) };
     style.spacing.window_margin  = Margin::same(0.0);
     ctx.set_style(style);
 }
 
 /// Initial setup: fonts + default theme.
+#[allow(dead_code)]
 pub fn setup(ctx: &egui::Context) {
     setup_fonts(ctx);
     apply(ctx);

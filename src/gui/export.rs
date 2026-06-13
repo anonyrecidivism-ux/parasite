@@ -28,7 +28,7 @@ pub fn save_pdf(path: &str, rgba: &[u8], w: u32, h: u32) -> io::Result<()> {
     let mut buf: Vec<u8> = Vec::new();
     let mut offsets = [0usize; 6]; // index 1..=5 used
 
-    let mut push = |buf: &mut Vec<u8>, s: &str| buf.extend_from_slice(s.as_bytes());
+    let push = |buf: &mut Vec<u8>, s: &str| buf.extend_from_slice(s.as_bytes());
     push(&mut buf, "%PDF-1.4\n");
 
     offsets[1] = buf.len();

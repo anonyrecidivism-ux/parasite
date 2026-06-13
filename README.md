@@ -41,13 +41,17 @@ run its default transform.
 ### Themes & customization
 A first-run **welcome screen** walks you through the basics. Open **⚙ Settings**
 (top-right) to customize:
-- **7 built-in themes**: Anthropic, Midnight, Matrix, Dracula, Nord, Solarized, Light.
+- **3 interface layouts**: Standard, Compact, Focus (canvas-only, no palette).
+- **12 built-in themes**: Anthropic, Midnight, Matrix, Dracula, Nord, Solarized,
+  Cyberpunk, Ocean, Rosé, Amber, Mono, Light.
 - **Custom accent colour** (full picker + quick swatches).
 - **Node shape** (circle / square / diamond / hexagon), **curved edges**,
   **background style** (grid / dots / plain).
 - **Node size**, **font scale** and **edge-label** toggles.
 
-Everything persists to `~/.config/parasite/settings.json`.
+Plus **3 layout algorithms** (force-directed / circle / grid), a **table view**
+of all entities, and **PNG/PDF/CSV** export. Everything persists to
+`~/.config/parasite/settings.json`.
 
 ### Self-install
 On first launch (Linux), parasite installs a desktop entry + icon into your
@@ -70,7 +74,7 @@ sign up for.
 |-----------|------------|
 | Domain    | To Website · Resolve to IP · Subdomains (crt.sh) · Subdomains (HackerTarget) · DNS Records · WHOIS · Wayback URLs · Google Dorks · Typosquats · Harvest Emails · **Hunter.io** · **VirusTotal** · Search Links |
 | Website   | Fetch & Fingerprint · Extract Links / Emails / Phones · To Domain · Find Exposed Files · robots.txt & Sitemap · Security Headers grade |
-| Email     | To Domain · To Username · Gravatar · **HaveIBeenPwned breaches** · Search Links |
+| Email     | To Domain · To Username · Gravatar · **HaveIBeenPwned breaches** · **holehe (CLI)** · Search Links |
 | Person    | To Username Guesses · Search Links |
 | Username  | **Hunt Accounts** (Sherlock-style, ~50 sites) · **GitHub Profile** · Search Links |
 | Social    | Fetch & Fingerprint |
@@ -80,10 +84,21 @@ sign up for.
 | Hash      | Identify Algorithm · Dictionary Lookup |
 
 **API integrations** (add keys in ⚙ Settings → keys stay local): Shodan,
-VirusTotal, Have I Been Pwned, Hunter.io, AbuseIPDB. Many transforms work with
-**no key** (GitHub, HackerTarget, crt.sh, RIPEstat, Wayback…). **Search Links**
-transforms hand you ready-made queries on dozens of OSINT services (Shodan,
-Censys, urlscan, IntelX, LinkedIn…) as nodes you can **open in the browser**.
+VirusTotal (host/domain/file), Have I Been Pwned, Hunter.io, AbuseIPDB. Many
+transforms work with **no key** (GitHub, HackerTarget, crt.sh, CertSpotter,
+RIPEstat, NVD, Wayback…).
+
+**External tool integration** — if you have these OSINT tools installed, parasite
+shells out to them and folds the results back onto the graph:
+[holehe](https://github.com/megadose/holehe) (email→accounts),
+[maigret](https://github.com/soxoj/maigret) (username),
+[subfinder](https://github.com/projectdiscovery/subfinder) &
+[theHarvester](https://github.com/laramies/theHarvester) (domain). Missing tools
+just log an install hint.
+
+**Search Links** transforms hand you ready-made queries on dozens of OSINT
+services (Shodan, Censys, urlscan, IntelX, LinkedIn…) as nodes you can **open in
+the browser**.
 
 Highlights:
 - **Hunt Accounts** is a self-contained, parallel re-implementation of

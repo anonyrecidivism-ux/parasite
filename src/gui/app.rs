@@ -59,6 +59,30 @@ fn machines() -> Vec<Machine> {
             waves: vec![
                 vec!["ip_ptr", "ip_geo", "ip_ports"],
             ] },
+        Machine { name: "Domain Attack Surface", root: Kind::Domain,
+            desc: "crt.sh + CertSpotter + DNS + WHOIS, then profile every IP & site",
+            waves: vec![
+                vec!["dom_resolve", "dom_crtsh", "dom_certspotter", "dom_dns", "dom_whois"],
+                vec!["ip_ptr", "ip_geo", "web_headers", "web_files"],
+            ] },
+        Machine { name: "Email → Accounts", root: Kind::Email,
+            desc: "username + holehe + gravatar, then hunt & GitHub the username",
+            waves: vec![
+                vec!["mail_user", "mail_domain", "mail_gravatar", "email_holehe"],
+                vec!["user_hunt", "user_github"],
+            ] },
+        Machine { name: "IP Deep Profile", root: Kind::Ip,
+            desc: "reverse DNS + reverse-IP + geo/ASN, then announced prefixes",
+            waves: vec![
+                vec!["ip_ptr", "ip_revip", "ip_geo"],
+                vec!["asn_prefixes"],
+            ] },
+        Machine { name: "ASN → Netblocks", root: Kind::Asn,
+            desc: "all prefixes announced by this ASN",
+            waves: vec![ vec!["asn_prefixes"] ] },
+        Machine { name: "Hash Triage", root: Kind::Hash,
+            desc: "identify algorithm + dictionary lookup",
+            waves: vec![ vec!["hash_id", "hash_lookup"] ] },
     ]
 }
 
@@ -106,6 +130,8 @@ pub struct GraphPanel {
     machine:   Option<MachineRun>,
     canvas_rect: egui::Rect,
     pending_shot: Option<ExportFmt>,
+    show_table: bool,
+    show_add: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -137,6 +163,8 @@ impl GraphPanel {
             machine: None,
             canvas_rect: egui::Rect::NOTHING,
             pending_shot: None,
+            show_table: false,
+            show_add: false,
         };
         s.log("◦  add an entity from the palette, then double-click it to run a transform");
         s
@@ -352,14 +380,17 @@ impl GraphPanel {
             self.graph.merge_props(source_id, &outcome.props);
         }
 
-        let origin = self.graph.entities.get(&source_id).map(|e| e.pos).unwrap_or_default();
+        let mut origin = self.graph.entities.get(&source_id).map(|e| e.pos).unwrap_or_default();
+        if !origin.x.is_finite() || !origin.y.is_finite() { origin = Pos2::ZERO; }
         let base_deg = self.graph.degree(source_id);
         let total = outcome.items.len().max(1);
 
         for (i, item) in outcome.items.into_iter().enumerate() {
-            // Fan children out on a ring around the source.
-            let ang = std::f32::consts::TAU * ((base_deg + i) as f32) / (total as f32 + base_deg as f32 + 1.0);
-            let radius = 150.0 + (i as f32 % 3.0) * 26.0;
+            // Fan children out on a ring around the source (+ jitter so children
+            // from repeated transforms never land on the exact same point).
+            let ang = std::f32::consts::TAU * ((base_deg + i) as f32) / (total as f32 + base_deg as f32 + 1.0)
+                + (i as f32 * 0.37);
+            let radius = 150.0 + (i as f32 % 5.0) * 22.0;
             let pos = Pos2::new(origin.x + radius * ang.cos(), origin.y + radius * ang.sin());
 
             let (child, created) = self.graph.upsert(item.kind, &item.value, pos);
@@ -445,6 +476,93 @@ impl GraphPanel {
         self.log_panel(ctx);
         self.canvas_panel(ctx);
         self.context_menu(ctx);
+        self.table_window(ctx);
+        self.add_window(ctx);
+    }
+
+    /// Quick add-entity popup (handy everywhere; the only way to add in Focus).
+    fn add_window(&mut self, ctx: &egui::Context) {
+        if !self.show_add { return; }
+        let mut open = true;
+        let mut do_add = false;
+        egui::Window::new(RichText::new("＋  New entity").color(text_pri()).strong())
+            .open(&mut open).collapsible(false).resizable(false)
+            .anchor(egui::Align2::LEFT_TOP, [16.0, 56.0])
+            .default_width(240.0)
+            .frame(egui::Frame::window(&ctx.style()).fill(bg_panel()).stroke(Stroke::new(1.0, border())))
+            .show(ctx, |ui| {
+                egui::ComboBox::from_id_salt("add_kind_combo")
+                    .selected_text(RichText::new(format!("{} {}", self.new_kind.icon(), self.new_kind.label())).color(text_pri()))
+                    .width(ui.available_width())
+                    .show_ui(ui, |ui| {
+                        for k in Kind::ALL {
+                            ui.selectable_value(&mut self.new_kind, k,
+                                RichText::new(format!("{}  {}", k.icon(), k.label())).color(k.color()));
+                        }
+                    });
+                ui.add_space(5.0);
+                let te = ui.add(TextEdit::singleline(&mut self.new_value)
+                    .hint_text(self.new_kind.default_value()).desired_width(f32::INFINITY));
+                ui.add_space(5.0);
+                if ui.add_sized([ui.available_width(), 28.0], egui::Button::new(
+                    RichText::new("Add to graph").color(Color32::WHITE).strong())
+                    .fill(accent()).rounding(Rounding::same(5.0))).clicked()
+                    || (te.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                {
+                    do_add = true;
+                }
+            });
+        if do_add {
+            let v = if self.new_value.trim().is_empty() { self.new_kind.default_value().to_string() }
+                    else { self.new_value.trim().to_string() };
+            self.add_entity(self.new_kind, v);
+            self.new_value.clear();
+        }
+        if !open { self.show_add = false; }
+    }
+
+    /// A sortable table view of every entity (Maltego's entity list).
+    fn table_window(&mut self, ctx: &egui::Context) {
+        if !self.show_table { return; }
+        let mut open = true;
+        let mut focus: Option<u64> = None;
+        egui::Window::new(RichText::new("▤  Entities").color(text_pri()).strong())
+            .open(&mut open)
+            .default_width(560.0)
+            .default_height(420.0)
+            .frame(egui::Frame::window(&ctx.style()).fill(bg_panel()).stroke(Stroke::new(1.0, border())))
+            .show(ctx, |ui| {
+                let mut rows: Vec<(u64, Kind, String, String)> = self.graph.entities.values().map(|e| {
+                    let props = e.props.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(", ");
+                    (e.id, e.kind, e.value.clone(), props)
+                }).collect();
+                rows.sort_by(|a, b| (a.1.label(), a.2.to_lowercase()).cmp(&(b.1.label(), b.2.to_lowercase())));
+
+                ui.label(RichText::new(format!("{} entities · {} links",
+                    rows.len(), self.graph.edges.len())).color(text_mut()).size(11.0));
+                ui.add_space(4.0);
+                ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                    egui::Grid::new("entity_table").num_columns(3).striped(true)
+                        .spacing([14.0, 4.0]).show(ui, |ui| {
+                            ui.label(RichText::new("Type").color(text_mut()).size(10.5).strong());
+                            ui.label(RichText::new("Value").color(text_mut()).size(10.5).strong());
+                            ui.label(RichText::new("Properties").color(text_mut()).size(10.5).strong());
+                            ui.end_row();
+                            for (id, kind, value, props) in &rows {
+                                let r = ui.add(egui::Label::new(RichText::new(format!("{} {}", kind.icon(), kind.label()))
+                                    .color(kind.color()).size(11.5)).sense(egui::Sense::click()));
+                                if r.clicked() { focus = Some(*id); }
+                                let rv = ui.add(egui::Label::new(RichText::new(value).color(text_pri()).size(11.5))
+                                    .sense(egui::Sense::click()));
+                                if rv.clicked() { focus = Some(*id); }
+                                ui.label(RichText::new(props).color(text_sec()).size(11.0));
+                                ui.end_row();
+                            }
+                        });
+                });
+            });
+        if let Some(id) = focus { self.focus(id); }
+        if !open { self.show_table = false; }
     }
 
     fn toolbar(&mut self, ctx: &egui::Context) {
@@ -454,6 +572,8 @@ impl GraphPanel {
                 .stroke(Stroke::new(1.0, border())))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
+                    if toolbtn(ui, "＋ New").clicked() { self.show_add = !self.show_add; }
+                    ui.add_space(6.0);
                     let count = self.graph.entities.len();
                     let edges = self.graph.edges.len();
                     super::logo::widget(ui, 8.0);
@@ -462,12 +582,23 @@ impl GraphPanel {
                         .color(text_sec()).size(12.0));
                     ui.add_space(12.0);
 
-                    if toolbtn(ui, "⊹ Layout").clicked() {
+                    if toolbtn(ui, "⊹ Force").clicked() {
                         canvas::auto_layout(&mut self.graph);
+                        self.needs_fit = true;
+                    }
+                    if toolbtn(ui, "○ Circle").clicked() {
+                        canvas::circle_layout(&mut self.graph);
+                        self.needs_fit = true;
+                    }
+                    if toolbtn(ui, "▦ Grid").clicked() {
+                        canvas::grid_layout(&mut self.graph);
                         self.needs_fit = true;
                     }
                     if toolbtn(ui, "⤢ Fit").clicked() {
                         self.needs_fit = true;
+                    }
+                    if toolbtn(ui, "▤ Table").clicked() {
+                        self.show_table = !self.show_table;
                     }
                     if toolbtn(ui, "✗ Clear").clicked() {
                         self.graph.clear();
@@ -502,8 +633,9 @@ impl GraphPanel {
     }
 
     fn palette(&mut self, ctx: &egui::Context) {
+        if !super::theme::variant().show_palette() { return; }
         egui::SidePanel::left("graph_palette")
-            .exact_width(210.0)
+            .exact_width(super::theme::variant().palette_width())
             .frame(egui::Frame::none().fill(bg_sidebar()).inner_margin(Margin::same(0.0)))
             .show(ctx, |ui| {
                 egui::Frame::none()
@@ -513,7 +645,7 @@ impl GraphPanel {
                         ui.add_space(8.0);
 
                         // Kind selector
-                        egui::ComboBox::from_id_source("kind_combo")
+                        egui::ComboBox::from_id_salt("kind_combo")
                             .selected_text(RichText::new(format!("{} {}",
                                 self.new_kind.icon(), self.new_kind.label())).color(text_pri()))
                             .width(ui.available_width())
@@ -629,7 +761,7 @@ impl GraphPanel {
 
     fn details_panel(&mut self, ctx: &egui::Context) {
         egui::SidePanel::right("graph_details")
-            .exact_width(290.0)
+            .exact_width(super::theme::variant().details_width())
             .frame(egui::Frame::none().fill(bg_panel()).inner_margin(Margin::same(0.0)))
             .show(ctx, |ui| {
                 let Some(id) = self.sel.primary else {

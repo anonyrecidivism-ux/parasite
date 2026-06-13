@@ -93,9 +93,22 @@ impl Shell {
             .frame(egui::Frame::window(&ctx.style()).fill(bg_panel()).stroke(Stroke::new(1.0, border())))
             .show(ctx, |ui| {
                 ui.add_space(4.0);
+                ui.label(RichText::new("INTERFACE").color(text_mut()).size(10.0).strong());
+                ui.add_space(4.0);
+                egui::ComboBox::from_id_salt("variant_combo")
+                    .selected_text(RichText::new(self.settings.variant.label()).color(text_pri()))
+                    .width(330.0)
+                    .show_ui(ui, |ui| {
+                        for v in theme::UiVariant::ALL {
+                            if ui.selectable_value(&mut self.settings.variant, v,
+                                RichText::new(v.label()).color(text_pri())).clicked() { changed = true; }
+                        }
+                    });
+
+                ui.add_space(10.0);
                 ui.label(RichText::new("THEME").color(text_mut()).size(10.0).strong());
                 ui.add_space(4.0);
-                egui::ComboBox::from_id_source("theme_combo")
+                egui::ComboBox::from_id_salt("theme_combo")
                     .selected_text(RichText::new(&self.settings.theme).color(text_pri()))
                     .width(330.0)
                     .show_ui(ui, |ui| {
@@ -144,7 +157,7 @@ impl Shell {
 
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("node shape").color(text_pri()).size(12.0));
-                    egui::ComboBox::from_id_source("shape_combo")
+                    egui::ComboBox::from_id_salt("shape_combo")
                         .selected_text(RichText::new(self.settings.node_shape.label()).color(text_pri()))
                         .show_ui(ui, |ui| {
                             for s in theme::NodeShape::ALL {
@@ -154,7 +167,7 @@ impl Shell {
                         });
                     ui.add_space(8.0);
                     ui.label(RichText::new("background").color(text_pri()).size(12.0));
-                    egui::ComboBox::from_id_source("bg_combo")
+                    egui::ComboBox::from_id_salt("bg_combo")
                         .selected_text(RichText::new(self.settings.bg_style.label()).color(text_pri()))
                         .show_ui(ui, |ui| {
                             for s in theme::BgStyle::ALL {
@@ -176,7 +189,7 @@ impl Shell {
                     ui.label(RichText::new("Enable extra integrations. Keys stay local in your settings file.")
                         .color(text_mut()).size(10.5));
                     ui.add_space(4.0);
-                    let mut field = |ui: &mut egui::Ui, label: &str, val: &mut String, changed: &mut bool| {
+                    let field = |ui: &mut egui::Ui, label: &str, val: &mut String, changed: &mut bool| {
                         ui.horizontal(|ui| {
                             ui.add_sized([90.0, 18.0], egui::Label::new(
                                 RichText::new(label).color(text_sec()).size(11.5)));
@@ -290,7 +303,29 @@ impl Shell {
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
+/// Ensure user-installed CLI tools (holehe, sherlock, maigret, subfinder…) are
+/// findable even when launched from a desktop menu with a minimal PATH.
+fn augment_path() {
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = home.to_string_lossy().into_owned();
+        let cur = std::env::var("PATH").unwrap_or_default();
+        let mut extra = vec![
+            format!("{home}/.local/bin"),
+            "/usr/local/bin".to_string(),
+            format!("{home}/go/bin"),
+        ];
+        extra.retain(|p| !cur.split(':').any(|c| c == p));
+        if !extra.is_empty() {
+            std::env::set_var("PATH", format!("{}:{}", extra.join(":"), cur));
+        }
+    }
+}
+
 pub fn run() -> eframe::Result<()> {
+    // Make sure user-installed CLI tools are on PATH (desktop-menu launches often
+    // have a minimal PATH that omits ~/.local/bin).
+    augment_path();
+
     // Desktop integration / CLI flags (--install, --uninstall, --no-install).
     if install::handle_cli() {
         return Ok(());

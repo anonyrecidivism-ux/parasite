@@ -5,10 +5,11 @@ use eframe::egui::{self, Color32};
 use serde::{Deserialize, Serialize};
 
 use super::keys::{self, ApiKeys};
-use super::theme::{self, BgStyle, NodeShape, UiConfig};
+use super::theme::{self, BgStyle, NodeShape, UiConfig, UiVariant};
 
-fn d_shape() -> NodeShape { NodeShape::Circle }
-fn d_bg()    -> BgStyle   { BgStyle::Grid }
+fn d_shape() -> NodeShape  { NodeShape::Circle }
+fn d_bg()    -> BgStyle    { BgStyle::Grid }
+fn d_var()   -> UiVariant  { UiVariant::Standard }
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Settings {
@@ -24,6 +25,8 @@ pub struct Settings {
     pub edge_curved: bool,
     #[serde(default = "d_bg")]
     pub bg_style:    BgStyle,
+    #[serde(default = "d_var")]
+    pub variant:     UiVariant,
     #[serde(default)]
     pub api:         ApiKeys,
     pub welcomed:    bool,
@@ -41,6 +44,7 @@ impl Default for Settings {
             node_shape: NodeShape::Circle,
             edge_curved: false,
             bg_style: BgStyle::Grid,
+            variant: UiVariant::Standard,
             api: ApiKeys::default(),
             welcomed: false,
         }
@@ -88,6 +92,7 @@ impl Settings {
             node_shape:  self.node_shape,
             edge_curved: self.edge_curved,
             bg_style:    self.bg_style,
+            variant:     self.variant,
         });
         keys::set(self.api.clone());
         theme::apply(ctx);

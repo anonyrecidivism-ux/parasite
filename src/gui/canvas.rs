@@ -69,9 +69,11 @@ impl View {
         let mut min = Pos2::new(f32::MAX, f32::MAX);
         let mut max = Pos2::new(f32::MIN, f32::MIN);
         for e in graph.entities.values() {
+            if !e.pos.x.is_finite() || !e.pos.y.is_finite() { continue; }
             min.x = min.x.min(e.pos.x); min.y = min.y.min(e.pos.y);
             max.x = max.x.max(e.pos.x); max.y = max.y.max(e.pos.y);
         }
+        if !min.x.is_finite() || !max.x.is_finite() { self.pan = Vec2::ZERO; self.zoom = 1.0; return; }
         let size = (max - min).max(Vec2::new(1.0, 1.0));
         let pad = 120.0;
         let zx = (rect.width()  - pad) / size.x;
@@ -200,6 +202,7 @@ pub fn draw(
     let curved = edge_curved();
     for edge in &graph.edges {
         let (Some(a), Some(b)) = (graph.entities.get(&edge.from), graph.entities.get(&edge.to)) else { continue };
+        if !finite(a.pos) || !finite(b.pos) { continue; }
         let pa = view.w2s(center, a.pos);
         let pb = view.w2s(center, b.pos);
         let estroke = Stroke::new(1.3, border());
@@ -308,6 +311,62 @@ fn node_at(graph: &Graph, view: &View, center: Pos2, p: Pos2) -> Option<u64> {
     best.map(|(id, _)| id)
 }
 
+/// Arrange all nodes on a circle.
+pub fn circle_layout(graph: &mut Graph) {
+    let mut ids: Vec<u64> = graph.entities.keys().copied().collect();
+    ids.sort_unstable();
+    let n = ids.len();
+    if n == 0 { return; }
+    let radius = (n as f32 * 26.0).max(160.0);
+    for (i, id) in ids.iter().enumerate() {
+        let a = std::f32::consts::TAU * i as f32 / n as f32;
+        if let Some(e) = graph.entities.get_mut(id) {
+            e.pos = Pos2::new(radius * a.cos(), radius * a.sin());
+            e.pinned = false;
+        }
+    }
+}
+
+/// Arrange all nodes on a square grid.
+pub fn grid_layout(graph: &mut Graph) {
+    let mut ids: Vec<u64> = graph.entities.keys().copied().collect();
+    ids.sort_unstable();
+    let n = ids.len();
+    if n == 0 { return; }
+    let cols = (n as f32).sqrt().ceil() as usize;
+    let step = 130.0;
+    let off = (cols as f32 - 1.0) * step * 0.5;
+    for (i, id) in ids.iter().enumerate() {
+        let (cx, cy) = ((i % cols) as f32, (i / cols) as f32);
+        if let Some(e) = graph.entities.get_mut(id) {
+            e.pos = Pos2::new(cx * step - off, cy * step - off);
+            e.pinned = false;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::auto_layout;
+    use super::super::model::{Graph, Kind};
+    use eframe::egui::Pos2;
+
+    #[test]
+    fn layout_stays_finite_with_coincident_nodes() {
+        let mut g = Graph::new();
+        // many nodes all stacked on the exact same point — used to produce NaN
+        let mut ids = Vec::new();
+        for i in 0..50 {
+            ids.push(g.add(if i % 2 == 0 { Kind::Domain } else { Kind::Ip }, format!("n{i}"), Pos2::ZERO));
+        }
+        for w in ids.windows(2) { g.link(w[0], w[1], "x"); }
+        auto_layout(&mut g);
+        for e in g.entities.values() {
+            assert!(e.pos.x.is_finite() && e.pos.y.is_finite(), "non-finite position after layout");
+        }
+    }
+}
+
 fn shape_pts(c: Pos2, r: f32, shape: NodeShape) -> Vec<Pos2> {
     match shape {
         NodeShape::Square => {
@@ -383,14 +442,42 @@ fn draw_grid(painter: &egui::Painter, rect: Rect, center: Pos2, view: &View) {
     }
 }
 
+/// A non-zero unit vector even when the input is (near) zero — never returns NaN.
+fn safe_dir(v: Vec2, seed: u64) -> (Vec2, f32) {
+    let len = v.length();
+    if len > 1e-4 && len.is_finite() {
+        (v / len, len)
+    } else {
+        // deterministic tiny offset so coincident nodes still separate
+        let a = (seed as f32 * 2.399_963) % std::f32::consts::TAU;
+        (Vec2::new(a.cos(), a.sin()), 0.5)
+    }
+}
+
+fn finite(p: Pos2) -> bool { p.x.is_finite() && p.y.is_finite() }
+
 /// Force-directed relaxation (Fruchterman–Reingold style). Pinned nodes stay put.
+/// Hardened against NaN/Inf (coincident nodes used to produce non-finite
+/// positions, which then crashed the renderer).
 pub fn auto_layout(graph: &mut Graph) {
     let ids: Vec<u64> = graph.entities.keys().copied().collect();
     let n = ids.len();
     if n < 2 { return; }
 
+    // Repair any non-finite positions before we start.
+    for (i, &id) in ids.iter().enumerate() {
+        if let Some(e) = graph.entities.get_mut(&id) {
+            if !finite(e.pos) {
+                e.pos = Pos2::new((i as f32 * 37.0) % 600.0 - 300.0, (i as f32 * 53.0) % 600.0 - 300.0);
+            }
+        }
+    }
+
+    // Fewer iterations as the graph grows, to keep the UI responsive.
+    let iters = match n { 0..=60 => 220, 61..=150 => 110, 151..=400 => 55, _ => 25 };
     let k = 150.0_f32; // ideal edge length
-    for _ in 0..240 {
+
+    for _ in 0..iters {
         let mut disp: std::collections::HashMap<u64, Vec2> = ids.iter().map(|&i| (i, Vec2::ZERO)).collect();
 
         // repulsion
@@ -399,11 +486,9 @@ pub fn auto_layout(graph: &mut Graph) {
                 let a = ids[ai]; let b = ids[bi];
                 let pa = graph.entities[&a].pos;
                 let pb = graph.entities[&b].pos;
-                let mut d = pa - pb;
-                let mut dist = d.length();
-                if dist < 0.01 { d = Vec2::new(0.5, 0.3); dist = 0.6; }
-                let force = (k * k) / dist;
-                let push = d.normalized() * force;
+                let (dir, dist) = safe_dir(pa - pb, a.wrapping_add(b));
+                let force = ((k * k) / dist.max(0.5)).min(20000.0);
+                let push = dir * force;
                 *disp.get_mut(&a).unwrap() += push;
                 *disp.get_mut(&b).unwrap() -= push;
             }
@@ -411,10 +496,9 @@ pub fn auto_layout(graph: &mut Graph) {
         // attraction along edges
         for e in &graph.edges {
             let (Some(a), Some(b)) = (graph.entities.get(&e.from), graph.entities.get(&e.to)) else { continue };
-            let d = a.pos - b.pos;
-            let dist = d.length().max(0.01);
-            let force = (dist * dist) / k;
-            let pull = d.normalized() * force;
+            let (dir, dist) = safe_dir(a.pos - b.pos, e.from.wrapping_add(e.to));
+            let force = ((dist * dist) / k).min(20000.0);
+            let pull = dir * force;
             *disp.get_mut(&e.from).unwrap() -= pull;
             *disp.get_mut(&e.to).unwrap()   += pull;
         }
@@ -423,8 +507,11 @@ pub fn auto_layout(graph: &mut Graph) {
             let e = graph.entities.get_mut(&id).unwrap();
             if e.pinned { continue; }
             let mv = disp[&id];
-            let len = mv.length().min(20.0);
-            if len > 0.0 { e.pos += mv.normalized() * len; }
+            let (dir, len) = safe_dir(mv, id);
+            if len > 1e-3 {
+                e.pos += dir * len.min(20.0);
+            }
+            if !finite(e.pos) { e.pos = Pos2::ZERO; }
         }
     }
 }

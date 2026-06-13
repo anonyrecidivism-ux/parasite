@@ -72,6 +72,14 @@ pub const TRANSFORMS: &[TransformDef] = &[
                    desc: "domain email search — needs Hunter.io key" },
     TransformDef { id: "dom_vt",       name: "VirusTotal Report",  applies: Kind::Domain,
                    desc: "reputation & detections — needs VirusTotal key" },
+    TransformDef { id: "dom_certspotter", name: "Subdomains (CertSpotter)", applies: Kind::Domain,
+                   desc: "certificate transparency via api.certspotter.com" },
+    TransformDef { id: "dom_subfinder", name: "subfinder (CLI)",    applies: Kind::Domain,
+                   desc: "passive subdomain enum — runs the subfinder tool" },
+    TransformDef { id: "dom_waybackurls", name: "waybackurls (CLI)", applies: Kind::Domain,
+                   desc: "archived URLs — runs the waybackurls tool" },
+    TransformDef { id: "dom_harvester", name: "theHarvester (CLI)", applies: Kind::Domain,
+                   desc: "emails & hosts — runs the theHarvester tool" },
     TransformDef { id: "dom_pivots",   name: "Search Links",       applies: Kind::Domain,
                    desc: "Shodan, Censys, urlscan, SecurityTrails… (open in browser)" },
     // ── Website ───────────────────────────────────────────────────────────────
@@ -100,6 +108,8 @@ pub const TRANSFORMS: &[TransformDef] = &[
                    desc: "check for a Gravatar tied to this email" },
     TransformDef { id: "email_hibp",   name: "Breaches (HIBP)",    applies: Kind::Email,
                    desc: "Have I Been Pwned breaches — needs HIBP key" },
+    TransformDef { id: "email_holehe", name: "holehe (account check)", applies: Kind::Email,
+                   desc: "where this email is registered — runs the holehe CLI tool" },
     TransformDef { id: "email_pivots", name: "Search Links",       applies: Kind::Email,
                    desc: "HIBP, EmailRep, Hunter, IntelX, Google (open in browser)" },
     // ── Person ────────────────────────────────────────────────────────────────
@@ -112,6 +122,10 @@ pub const TRANSFORMS: &[TransformDef] = &[
                    desc: "Sherlock-style search across 50 social networks" },
     TransformDef { id: "user_github",  name: "GitHub Profile",     applies: Kind::Username,
                    desc: "GitHub user: name, org, location, blog (free API)" },
+    TransformDef { id: "user_maigret", name: "maigret (CLI)",      applies: Kind::Username,
+                   desc: "deep account search — runs the maigret tool" },
+    TransformDef { id: "user_sherlock", name: "sherlock (CLI)",    applies: Kind::Username,
+                   desc: "the original sherlock tool, if installed" },
     TransformDef { id: "user_pivots",  name: "Search Links",       applies: Kind::Username,
                    desc: "search engines & people-search (open in browser)" },
     // ── Social ────────────────────────────────────────────────────────────────
@@ -140,11 +154,16 @@ pub const TRANSFORMS: &[TransformDef] = &[
     // ── Phone ─────────────────────────────────────────────────────────────────
     TransformDef { id: "phone_info",   name: "Country / Region",   applies: Kind::Phone,
                    desc: "guess country from the calling code" },
+    // ── CVE ───────────────────────────────────────────────────────────────────
+    TransformDef { id: "cve_nvd",      name: "NVD Details",        applies: Kind::Cve,
+                   desc: "description, CVSS score & severity from NVD" },
     // ── Hash ──────────────────────────────────────────────────────────────────
     TransformDef { id: "hash_id",      name: "Identify Algorithm", applies: Kind::Hash,
                    desc: "guess the hash type from length & charset" },
     TransformDef { id: "hash_lookup",  name: "Dictionary Lookup",  applies: Kind::Hash,
                    desc: "check against a built-in table of common hashes" },
+    TransformDef { id: "hash_vt",      name: "VirusTotal File",    applies: Kind::Hash,
+                   desc: "malware report for this file hash — needs VirusTotal key" },
 ];
 
 pub fn for_kind(kind: Kind) -> Vec<&'static TransformDef> {
@@ -345,6 +364,17 @@ pub async fn run(id: &str, value: &str) -> Outcome {
         "email_hibp" => hibp(&v, &mut o).await,
         "ip_abuse"   => abuseipdb(&v, &mut o).await,
         "dom_hunter" => hunter(&v, &mut o).await,
+        // ── more real APIs ──
+        "dom_certspotter" => certspotter(&v, &mut o).await,
+        "cve_nvd"    => nvd_cve(&v, &mut o).await,
+        "hash_vt"    => virustotal_file(&v, &mut o).await,
+        // ── external GitHub CLI tools (optional) ──
+        "email_holehe"  => holehe(&v, &mut o).await,
+        "user_maigret"  => maigret(&v, &mut o).await,
+        "dom_subfinder" => subfinder(&v, &mut o).await,
+        "dom_harvester" => the_harvester(&v, &mut o).await,
+        "user_sherlock" => sherlock_cli(&v, &mut o).await,
+        "dom_waybackurls" => waybackurls_cli(&v, &mut o).await,
         other => o.log.push(format!("✗  unknown transform '{other}'")),
     }
 
@@ -789,7 +819,13 @@ async fn hunt_accounts(username: &str, o: &mut Outcome) {
     }
     let sites = sherlock::sites();
     o.log.push(format!("◦  hunting '{username}' across {} sites…", sites.len()));
-    let c = client();
+    // a browser-like UA so sites don't serve bots a misleading status/page
+    let c = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0 Safari/537.36")
+        .timeout(Duration::from_secs(15))
+        .danger_accept_invalid_certs(true)
+        .build()
+        .unwrap_or_else(|_| client());
 
     let tasks = sites.into_iter().map(|site| {
         let c = c.clone();
@@ -1207,6 +1243,211 @@ async fn hunter(domain: &str, o: &mut Outcome) {
         }
     }
     o.log.push(format!("✓  Hunter.io: {n} email(s)"));
+}
+
+// ── more real APIs ─────────────────────────────────────────────────────────────
+async fn certspotter(domain: &str, o: &mut Outcome) {
+    let url = format!("https://api.certspotter.com/v1/issuances?domain={}&include_subdomains=true&expand=dns_names", enc(domain));
+    o.log.push("◦  querying CertSpotter…".into());
+    let resp = match client().get(&url).send().await {
+        Ok(r) => r, Err(e) => { o.log.push(format!("✗  {e}")); return; }
+    };
+    if !resp.status().is_success() { o.log.push(format!("✗  CertSpotter: HTTP {}", resp.status().as_u16())); return; }
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&resp.text().await.unwrap_or_default()).unwrap_or_default();
+    let mut seen: Vec<String> = Vec::new();
+    for issuance in arr {
+        if let Some(names) = issuance.get("dns_names").and_then(|v| v.as_array()) {
+            for nm in names {
+                if let Some(h) = nm.as_str() {
+                    let h = h.trim_start_matches("*.").to_lowercase();
+                    if h.ends_with(domain) && h != domain && !seen.contains(&h) {
+                        seen.push(h.clone());
+                        if seen.len() <= 200 { o.item(Kind::Domain, h, "subdomain"); }
+                    }
+                }
+            }
+        }
+    }
+    o.log.push(format!("✓  {} subdomain(s) from CertSpotter", seen.len()));
+}
+
+async fn nvd_cve(cve: &str, o: &mut Outcome) {
+    let id = cve.trim().to_uppercase();
+    let url = format!("https://services.nvd.nist.gov/rest/json/2.0/cves/2.0?cveId={}", enc(&id));
+    let resp = match client().get(&url).send().await {
+        Ok(r) => r, Err(e) => { o.log.push(format!("✗  {e}")); return; }
+    };
+    let j: serde_json::Value = serde_json::from_str(&resp.text().await.unwrap_or_default()).unwrap_or_default();
+    let Some(cve_obj) = j.pointer("/vulnerabilities/0/cve") else {
+        o.log.push("◦  CVE not found in NVD".into()); return;
+    };
+    if let Some(desc) = cve_obj.pointer("/descriptions/0/value").and_then(|v| v.as_str()) {
+        o.log.push(format!("✓  {desc}"));
+        o.props.push(("description".into(), desc.chars().take(300).collect()));
+    }
+    // CVSS v3.1 then v2 fallback
+    let metric = cve_obj.pointer("/metrics/cvssMetricV31/0/cvssData")
+        .or_else(|| cve_obj.pointer("/metrics/cvssMetricV30/0/cvssData"))
+        .or_else(|| cve_obj.pointer("/metrics/cvssMetricV2/0/cvssData"));
+    if let Some(m) = metric {
+        if let Some(score) = m.get("baseScore").and_then(|v| v.as_f64()) {
+            let sev = m.get("baseSeverity").and_then(|v| v.as_str()).unwrap_or("");
+            o.log.push(format!("⚠  CVSS {score} {sev}"));
+            o.props.push(("cvss".into(), format!("{score} {sev}")));
+            o.item(Kind::Phrase, format!("CVSS {score} {sev}"), "severity");
+        }
+    }
+    if let Some(refs) = cve_obj.pointer("/references").and_then(|v| v.as_array()) {
+        for r in refs.iter().take(10) {
+            if let Some(u) = r.get("url").and_then(|v| v.as_str()) { o.item(Kind::Website, u.to_string(), "reference"); }
+        }
+    }
+}
+
+async fn virustotal_file(hash: &str, o: &mut Outcome) {
+    let Some(k) = key("virustotal", o) else { return };
+    let url = format!("https://www.virustotal.com/api/v3/files/{}", enc(hash.trim()));
+    let resp = match client().get(&url).header("x-apikey", k).send().await {
+        Ok(r) => r, Err(e) => { o.log.push(format!("✗  {e}")); return; }
+    };
+    if resp.status().as_u16() == 404 { o.log.push("◦  hash unknown to VirusTotal".into()); return; }
+    if !resp.status().is_success() { o.log.push(format!("✗  VirusTotal: HTTP {}", resp.status().as_u16())); return; }
+    let j: serde_json::Value = serde_json::from_str(&resp.text().await.unwrap_or_default()).unwrap_or_default();
+    let a = j.pointer("/data/attributes");
+    if let Some(stats) = a.and_then(|x| x.get("last_analysis_stats")) {
+        let mal = stats.get("malicious").and_then(|v| v.as_u64()).unwrap_or(0);
+        let total = stats.as_object().map(|m| m.values().filter_map(|v| v.as_u64()).sum::<u64>()).unwrap_or(0);
+        o.log.push(format!("⚠  VT: {mal}/{total} engines flagged it"));
+        o.props.push(("vt_detections".into(), format!("{mal}/{total}")));
+        o.item(Kind::Phrase, format!("VT {mal}/{total} malicious"), "verdict");
+    }
+    if let Some(name) = a.and_then(|x| x.get("meaningful_name")).and_then(|v| v.as_str()) {
+        o.item(Kind::File, name.to_string(), "filename");
+    }
+}
+
+// ── external GitHub CLI tools (run if installed) ───────────────────────────────
+/// Run a command, returning combined stdout+stderr, or None if the binary is
+/// missing. Does not log on its own.
+async fn try_tool(bin: &str, args: &[&str]) -> Option<String> {
+    use tokio::process::Command;
+    match Command::new(bin).args(args).output().await {
+        Ok(out) => Some(format!("{}{}",
+            String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr))),
+        Err(_) => None,
+    }
+}
+
+async fn run_tool(bin: &str, args: &[&str], o: &mut Outcome) -> Option<String> {
+    o.log.push(format!("◦  running {bin}…"));
+    let out = try_tool(bin, args).await;
+    if out.is_none() {
+        o.log.push(format!("✗  '{bin}' not installed — install it (e.g. pipx install {bin}) to use this"));
+    }
+    out
+}
+
+async fn holehe(email: &str, o: &mut Outcome) {
+    o.log.push("◦  running holehe…".into());
+    // try the CLI, then `python3 -m holehe` as a fallback
+    let mut out = try_tool("holehe", &["--only-used", "--no-color", email]).await;
+    if out.is_none() {
+        out = try_tool("python3", &["-m", "holehe", "--only-used", "--no-color", email]).await;
+    }
+    let Some(out) = out else {
+        o.log.push("✗  holehe not found — install with: pipx install holehe".into());
+        return;
+    };
+    let mut n = 0;
+    for line in out.lines() {
+        let l = line.trim();
+        if let Some(rest) = l.strip_prefix("[+]") {
+            let site = rest.trim();
+            if !site.is_empty() {
+                n += 1;
+                o.item(Kind::Social, format!("https://{site}"), "registered");
+                o.props.push(("holehe".into(), site.to_string()));
+            }
+        }
+    }
+    o.log.push(format!("✓  holehe: {n} site(s) where this email is used"));
+}
+
+async fn maigret(username: &str, o: &mut Outcome) {
+    o.log.push("◦  running maigret…".into());
+    let mut out = try_tool("maigret", &[username, "--no-color", "--timeout", "10"]).await;
+    if out.is_none() {
+        out = try_tool("python3", &["-m", "maigret", username, "--no-color", "--timeout", "10"]).await;
+    }
+    let Some(out) = out else {
+        o.log.push("✗  maigret not found — install with: pipx install maigret".into());
+        return;
+    };
+    let re = Regex::new(r"https?://[^\s]+").unwrap();
+    let mut seen: Vec<String> = Vec::new();
+    for line in out.lines() {
+        if line.contains("[+]") {
+            if let Some(m) = re.find(line) {
+                let u = m.as_str().to_string();
+                if !seen.contains(&u) { seen.push(u.clone()); o.item(Kind::Social, u, "maigret"); }
+            }
+        }
+    }
+    o.log.push(format!("✓  maigret: {} profile(s)", seen.len()));
+}
+
+async fn sherlock_cli(username: &str, o: &mut Outcome) {
+    let Some(out) = run_tool("sherlock", &["--print-found", "--no-color", "--timeout", "10", username], o).await else { return };
+    let re = Regex::new(r"https?://[^\s]+").unwrap();
+    let mut seen: Vec<String> = Vec::new();
+    for line in out.lines() {
+        if line.contains("[+]") {
+            if let Some(m) = re.find(line) {
+                let u = m.as_str().to_string();
+                if !seen.contains(&u) { seen.push(u.clone()); o.item(Kind::Social, u, "sherlock"); }
+            }
+        }
+    }
+    o.log.push(format!("✓  sherlock: {} profile(s)", seen.len()));
+}
+
+async fn waybackurls_cli(domain: &str, o: &mut Outcome) {
+    let Some(out) = run_tool("waybackurls", &[domain], o).await else { return };
+    let mut n = 0;
+    for line in out.lines() {
+        let u = line.trim();
+        if u.starts_with("http") { n += 1; if n <= 200 { o.item(Kind::Website, u.to_string(), "archived"); } }
+    }
+    o.log.push(format!("✓  waybackurls: {n} URL(s)"));
+}
+
+async fn subfinder(domain: &str, o: &mut Outcome) {
+    let Some(out) = run_tool("subfinder", &["-d", domain, "-silent"], o).await else { return };
+    let mut n = 0;
+    for line in out.lines() {
+        let h = line.trim().to_lowercase();
+        if h.ends_with(domain) && !h.is_empty() { n += 1; if n <= 300 { o.item(Kind::Domain, h, "subdomain"); } }
+    }
+    o.log.push(format!("✓  subfinder: {n} subdomain(s)"));
+}
+
+async fn the_harvester(domain: &str, o: &mut Outcome) {
+    let Some(out) = run_tool("theHarvester", &["-d", domain, "-b", "duckduckgo,bing,crtsh"], o).await else { return };
+    let mail_re = Regex::new(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}").unwrap();
+    let host_re = Regex::new(r"[A-Za-z0-9._\-]+\.[A-Za-z0-9.\-]+").unwrap();
+    let mut emails: Vec<String> = Vec::new();
+    let mut hosts: Vec<String> = Vec::new();
+    for m in mail_re.find_iter(&out) {
+        let e = m.as_str().to_lowercase();
+        if !emails.contains(&e) { emails.push(e.clone()); o.item(Kind::Email, e, "harvested"); }
+    }
+    for m in host_re.find_iter(&out) {
+        let h = m.as_str().to_lowercase();
+        if h.ends_with(domain) && h != domain && !hosts.contains(&h) && hosts.len() < 200 {
+            hosts.push(h.clone()); o.item(Kind::Domain, h, "subdomain");
+        }
+    }
+    o.log.push(format!("✓  theHarvester: {} email(s), {} host(s)", emails.len(), hosts.len()));
 }
 
 fn ensure_scheme(v: &str) -> String {
