@@ -1,0 +1,9 @@
+/target
+**/*.rs.bk
+
+# Runtime artifacts
+*.log
+results.json
+crawler_state.json
+graph.json
+config.json
