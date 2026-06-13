@@ -54,9 +54,13 @@ A first-run **welcome screen** walks you through the basics. Open **⚙ Settings
 - **Edge thickness**, curved edges, node-label toggle.
 
 Panels are **resizable** (drag their edges). Plus **5 layout algorithms**
-(force-directed / circle / grid / tree / radial), a **table view** of all
-entities, and **PNG/PDF/CSV** export. Everything persists to
+(force-directed / circle / grid / tree / radial), a **table view**, a
+**graph-analytics** panel (degree centrality, connected components, density,
+isolates) and **PNG/PDF/CSV** export. Everything persists to
 `~/.config/parasite/settings.json`.
+
+The installed menu copy **auto-updates**: launch a freshly-built version and it
+refreshes the binary in `~/.local/share/parasite/` automatically.
 
 Run `parasitephp --setup` to auto-install the optional OSINT CLI tools
 (holehe, sherlock, maigret, subfinder, waybackurls).

@@ -65,6 +65,16 @@ fn home() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }
 
+/// True if `a` is newer than `b` (or `b` can't be read — treat as needs update).
+#[cfg(target_os = "linux")]
+fn is_newer(a: &std::path::Path, b: &std::path::Path) -> bool {
+    use std::fs;
+    match (fs::metadata(a).and_then(|m| m.modified()), fs::metadata(b).and_then(|m| m.modified())) {
+        (Ok(ma), Ok(mb)) => ma > mb,
+        _ => true,
+    }
+}
+
 /// Download & install the optional OSINT CLI tools the transforms can use.
 pub fn setup() {
     use std::process::Command;
@@ -116,9 +126,20 @@ pub fn install(force: bool) -> std::io::Result<String> {
     let icon_dir  = home.join(".local/share/icons/hicolor/scalable/apps");
     let inst_dir  = home.join(".local/share/parasite");
     let desktop   = apps_dir.join("parasite.desktop");
+    let exe       = std::env::current_exe()?;
+    let gui_dst   = inst_dir.join("parasitephp");
 
-    if desktop.exists() && !force {
+    // (Re)install when forced, when not yet installed, or when this binary is
+    // newer than the installed copy — so launching a freshly-built version
+    // automatically updates the one in the app menu.
+    let need = force
+        || !desktop.exists()
+        || (exe != gui_dst && is_newer(&exe, &gui_dst));
+    if !need {
         return Ok(desktop.display().to_string());
+    }
+    if desktop.exists() && !force {
+        println!("↻  newer build detected — updating the installed parasite copy…");
     }
 
     fs::create_dir_all(&apps_dir)?;
@@ -127,8 +148,6 @@ pub fn install(force: bool) -> std::io::Result<String> {
 
     // Copy the GUI binary (and the recon engine beside it, if present) into the
     // stable install dir so the menu entry keeps working after a `cargo clean`.
-    let exe = std::env::current_exe()?;
-    let gui_dst = inst_dir.join("parasitephp");
     if exe != gui_dst {
         let _ = fs::copy(&exe, &gui_dst);
     }

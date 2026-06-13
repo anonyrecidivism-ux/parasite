@@ -14,6 +14,11 @@ them into **Beta 2**.
 The "make it a real Maltego competitor" release.
 
 ### Added
+- **Graph analytics** panel — degree centrality (most-connected nodes),
+  connected components/clusters, density, average degree, isolates (with
+  one-click select), and a by-type breakdown.
+- **Auto-update** — launching a newer build refreshes the installed copy in
+  `~/.local/share/parasite/` automatically.
 - **Interface variants** — 3 layouts selectable in Settings: Standard, Compact,
   Focus (canvas-only, no palette) + a quick **＋ New** entity popup.
 - **Themes** — now 12: Anthropic, Midnight, Matrix, Dracula, Nord, Solarized,

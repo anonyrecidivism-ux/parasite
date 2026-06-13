@@ -132,6 +132,7 @@ pub struct GraphPanel {
     pending_shot: Option<ExportFmt>,
     show_table: bool,
     show_add: bool,
+    show_analytics: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -165,6 +166,7 @@ impl GraphPanel {
             pending_shot: None,
             show_table: false,
             show_add: false,
+            show_analytics: false,
         };
         s.log("◦  add an entity from the palette, then double-click it to run a transform");
         s
@@ -478,6 +480,112 @@ impl GraphPanel {
         self.context_menu(ctx);
         self.table_window(ctx);
         self.add_window(ctx);
+        self.analytics_window(ctx);
+    }
+
+    /// Graph analytics — degree centrality, connected components, density…
+    fn analytics_window(&mut self, ctx: &egui::Context) {
+        if !self.show_analytics { return; }
+        let g = &self.graph;
+        let n = g.entities.len();
+        let e = g.edges.len();
+
+        // undirected adjacency + degree
+        let mut deg: std::collections::HashMap<u64, usize> = g.entities.keys().map(|&k| (k, 0)).collect();
+        let mut adj: std::collections::HashMap<u64, Vec<u64>> = g.entities.keys().map(|&k| (k, Vec::new())).collect();
+        for ed in &g.edges {
+            if let Some(d) = deg.get_mut(&ed.from) { *d += 1; }
+            if let Some(d) = deg.get_mut(&ed.to)   { *d += 1; }
+            if adj.contains_key(&ed.from) && adj.contains_key(&ed.to) {
+                adj.get_mut(&ed.from).unwrap().push(ed.to);
+                adj.get_mut(&ed.to).unwrap().push(ed.from);
+            }
+        }
+        // connected components (BFS)
+        let mut seen: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        let mut comps = 0usize;
+        let mut largest = 0usize;
+        for &start in adj.keys() {
+            if seen.contains(&start) { continue; }
+            comps += 1;
+            let mut size = 0;
+            let mut q = std::collections::VecDeque::from([start]);
+            seen.insert(start);
+            while let Some(x) = q.pop_front() {
+                size += 1;
+                for &y in &adj[&x] { if seen.insert(y) { q.push_back(y); } }
+            }
+            largest = largest.max(size);
+        }
+        let density = if n > 1 { 2.0 * e as f64 / (n as f64 * (n as f64 - 1.0)) } else { 0.0 };
+        let avg_deg = if n > 0 { 2.0 * e as f64 / n as f64 } else { 0.0 };
+        let isolates: Vec<u64> = deg.iter().filter(|(_, &d)| d == 0).map(|(&k, _)| k).collect();
+
+        // top by degree
+        let mut top: Vec<(u64, usize)> = deg.iter().map(|(&k, &d)| (k, d)).collect();
+        top.sort_by(|a, b| b.1.cmp(&a.1));
+        top.truncate(8);
+
+        // by-kind counts
+        let mut by_kind: std::collections::HashMap<&'static str, usize> = std::collections::HashMap::new();
+        for ent in g.entities.values() { *by_kind.entry(ent.kind.label()).or_default() += 1; }
+        let mut by_kind: Vec<(&str, usize)> = by_kind.into_iter().collect();
+        by_kind.sort_by(|a, b| b.1.cmp(&a.1));
+
+        let mut open = true;
+        let mut focus: Option<u64> = None;
+        let mut select_isolates = false;
+        egui::Window::new(RichText::new("∑  Graph analytics").color(text_pri()).strong())
+            .open(&mut open).default_width(340.0)
+            .frame(egui::Frame::window(&ctx.style()).fill(bg_panel()).stroke(Stroke::new(1.0, border())))
+            .show(ctx, |ui| {
+                let row = |ui: &mut egui::Ui, k: &str, v: String| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(k).color(text_sec()).size(12.0));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(RichText::new(v).color(text_pri()).strong().size(12.0));
+                        });
+                    });
+                };
+                row(ui, "Entities", n.to_string());
+                row(ui, "Links", e.to_string());
+                row(ui, "Density", format!("{:.3}", density));
+                row(ui, "Avg degree", format!("{:.2}", avg_deg));
+                row(ui, "Components (clusters)", comps.to_string());
+                row(ui, "Largest cluster", largest.to_string());
+                row(ui, "Isolates", isolates.len().to_string());
+                if !isolates.is_empty() {
+                    if ui.add(egui::Button::new(RichText::new("select isolates").color(accent()).size(11.0))
+                        .fill(Color32::TRANSPARENT).stroke(Stroke::new(1.0, border()))
+                        .rounding(Rounding::same(4.0))).clicked() { select_isolates = true; }
+                }
+
+                ui.add_space(8.0); ui.separator();
+                ui.label(RichText::new("MOST CONNECTED (degree centrality)").color(text_mut()).size(10.0).strong());
+                ui.add_space(2.0);
+                for (id, d) in &top {
+                    if *d == 0 { continue; }
+                    if let Some(ent) = self.graph.entities.get(id) {
+                        let r = ui.add(egui::Label::new(RichText::new(format!("{}  {}  ·  {d}",
+                            ent.kind.icon(), truncate(&ent.value, 26))).color(text_pri()).size(11.5))
+                            .sense(egui::Sense::click()));
+                        if r.clicked() { focus = Some(*id); }
+                        if r.hovered() { ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand); }
+                    }
+                }
+
+                ui.add_space(8.0); ui.separator();
+                ui.label(RichText::new("BY TYPE").color(text_mut()).size(10.0).strong());
+                ui.add_space(2.0);
+                for (k, c) in &by_kind { row(ui, k, c.to_string()); }
+            });
+
+        if select_isolates {
+            self.sel.clear();
+            for id in isolates { self.sel.set.insert(id); self.sel.primary = Some(id); }
+        }
+        if let Some(id) = focus { self.focus(id); }
+        if !open { self.show_analytics = false; }
     }
 
     /// Quick add-entity popup (handy everywhere; the only way to add in Focus).
@@ -596,6 +704,9 @@ impl GraphPanel {
                     }
                     if toolbtn(ui, "▤ Table").clicked() {
                         self.show_table = !self.show_table;
+                    }
+                    if toolbtn(ui, "∑ Analytics").clicked() {
+                        self.show_analytics = !self.show_analytics;
                     }
                     if toolbtn(ui, "✗ Clear").clicked() {
                         self.graph.clear();
