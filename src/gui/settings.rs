@@ -27,10 +27,17 @@ pub struct Settings {
     pub bg_style:    BgStyle,
     #[serde(default = "d_var")]
     pub variant:     UiVariant,
+    #[serde(default = "d_ew")]
+    pub edge_width:  f32,
+    #[serde(default = "d_true")]
+    pub node_labels: bool,
     #[serde(default)]
     pub api:         ApiKeys,
     pub welcomed:    bool,
 }
+
+fn d_ew()   -> f32  { 1.3 }
+fn d_true() -> bool { true }
 
 impl Default for Settings {
     fn default() -> Self {
@@ -45,6 +52,8 @@ impl Default for Settings {
             edge_curved: false,
             bg_style: BgStyle::Grid,
             variant: UiVariant::Standard,
+            edge_width: 1.3,
+            node_labels: true,
             api: ApiKeys::default(),
             welcomed: false,
         }
@@ -91,6 +100,8 @@ impl Settings {
             font_scale:  self.font_scale.clamp(0.7, 1.6),
             node_shape:  self.node_shape,
             edge_curved: self.edge_curved,
+            edge_width:  self.edge_width.clamp(0.5, 5.0),
+            node_labels: self.node_labels,
             bg_style:    self.bg_style,
             variant:     self.variant,
         });

@@ -151,9 +151,20 @@ pub const TRANSFORMS: &[TransformDef] = &[
     // ── ASN ───────────────────────────────────────────────────────────────────
     TransformDef { id: "asn_prefixes", name: "Announced Prefixes", applies: Kind::Asn,
                    desc: "netblocks announced by this ASN (RIPEstat)" },
+    // ── Organization ──────────────────────────────────────────────────────────
+    TransformDef { id: "org_domain",   name: "Guess Domain",       applies: Kind::Organization,
+                   desc: "build a likely primary domain from the name" },
+    TransformDef { id: "org_dork",     name: "Google Dorks",       applies: Kind::Organization,
+                   desc: "search-engine dorks targeting this organization" },
+    TransformDef { id: "org_pivots",   name: "Search Links",       applies: Kind::Organization,
+                   desc: "LinkedIn, OpenCorporates, Crunchbase, Google (open in browser)" },
     // ── Phone ─────────────────────────────────────────────────────────────────
     TransformDef { id: "phone_info",   name: "Country / Region",   applies: Kind::Phone,
                    desc: "guess country from the calling code" },
+    TransformDef { id: "phone_format", name: "Normalize",          applies: Kind::Phone,
+                   desc: "strip to E.164-ish digits and validate length" },
+    TransformDef { id: "phone_pivots", name: "Search Links",       applies: Kind::Phone,
+                   desc: "Truecaller, sync.me, WhoCalld, Google (open in browser)" },
     // ── CVE ───────────────────────────────────────────────────────────────────
     TransformDef { id: "cve_nvd",      name: "NVD Details",        applies: Kind::Cve,
                    desc: "description, CVSS score & severity from NVD" },
@@ -347,6 +358,11 @@ pub async fn run(id: &str, value: &str) -> Outcome {
         "dom_permute" => permute(&v, &mut o),
         "asn_prefixes" => asn_prefixes(&v, &mut o).await,
         "phone_info" => phone_info(&v, &mut o),
+        "phone_format" => phone_format(&v, &mut o),
+        "phone_pivots" => pivots(&v, "phone", &mut o),
+        "org_domain" => org_domain(&v, &mut o),
+        "org_dork"   => org_dork(&v, &mut o),
+        "org_pivots" => pivots(&v, "org", &mut o),
         "hash_lookup" => hash_lookup(&v, &mut o),
         // ── awesome-osint style search/pivot links ──
         "dom_pivots"    => pivots(&v, "domain", &mut o),
@@ -1051,6 +1067,19 @@ fn pivots(value: &str, kind: &str, o: &mut Outcome) {
             ("Facebook", format!("https://www.facebook.com/search/people/?q={e}")),
             ("TruePeopleSearch", format!("https://www.truepeoplesearch.com/results?name={e}")),
         ],
+        "org" => vec![
+            ("Google",         format!("https://www.google.com/search?q=%22{e}%22")),
+            ("LinkedIn",       format!("https://www.linkedin.com/search/results/companies/?keywords={e}")),
+            ("OpenCorporates", format!("https://opencorporates.com/companies?q={e}")),
+            ("Crunchbase",     format!("https://www.crunchbase.com/textsearch?q={e}")),
+            ("Wikipedia",      format!("https://en.wikipedia.org/w/index.php?search={e}")),
+        ],
+        "phone" => vec![
+            ("Google",      format!("https://www.google.com/search?q=%22{e}%22")),
+            ("Truecaller",  format!("https://www.truecaller.com/search/global/{e}")),
+            ("Sync.me",     format!("https://sync.me/search/?number={e}")),
+            ("WhoCalld",    format!("https://whocalld.com/{e}")),
+        ],
         _ => vec![],
     };
     for (name, url) in links {
@@ -1059,6 +1088,47 @@ fn pivots(value: &str, kind: &str, o: &mut Outcome) {
             edge: (*name).into(), props: vec![("service".into(), (*name).into())] });
     }
     o.log.push(format!("◦  {} search link(s) — open them from the details panel", links.len()));
+}
+
+fn org_domain(org: &str, o: &mut Outcome) {
+    let slug: String = org.to_lowercase().chars()
+        .filter(|c| c.is_alphanumeric() || c.is_whitespace())
+        .collect::<String>()
+        .replace([' '], "");
+    if slug.is_empty() { o.log.push("✗  empty organization name".into()); return; }
+    for tld in ["com", "io", "net", "org", "co"] {
+        let d = format!("{slug}.{tld}");
+        o.log.push(format!("◦  candidate {d}"));
+        o.item(Kind::Domain, d, "likely domain");
+    }
+}
+
+fn org_dork(org: &str, o: &mut Outcome) {
+    let templates = [
+        "\"{o}\" filetype:pdf",
+        "\"{o}\" (confidential OR internal OR proprietary)",
+        "\"{o}\" site:linkedin.com/in",
+        "\"{o}\" (email OR contact) @",
+        "\"{o}\" site:github.com",
+        "\"{o}\" intext:password filetype:xls",
+    ];
+    for t in templates {
+        let q = t.replace("{o}", org);
+        o.log.push(format!("◦  {q}"));
+        o.item(Kind::Phrase, q, "dork");
+    }
+}
+
+fn phone_format(phone: &str, o: &mut Outcome) {
+    let mut digits: String = phone.chars().filter(|c| c.is_ascii_digit()).collect();
+    let plus = phone.trim_start().starts_with('+');
+    if plus { digits = format!("+{digits}"); }
+    let n = digits.chars().filter(|c| c.is_ascii_digit()).count();
+    let valid = (8..=15).contains(&n);
+    o.log.push(format!("{}  {digits}  ({n} digits)", if valid { "✓" } else { "⚠" }));
+    o.props.push(("normalized".into(), digits.clone()));
+    o.props.push(("valid_length".into(), valid.to_string()));
+    if valid { o.item(Kind::Phrase, digits, "E.164"); }
 }
 
 // ── GitHub user (free) ─────────────────────────────────────────────────────────

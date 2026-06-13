@@ -205,7 +205,7 @@ pub fn draw(
         if !finite(a.pos) || !finite(b.pos) { continue; }
         let pa = view.w2s(center, a.pos);
         let pb = view.w2s(center, b.pos);
-        let estroke = Stroke::new(1.3, border());
+        let estroke = Stroke::new(edge_width(), border());
 
         let (mid, dir) = if curved {
             // quadratic curve: control point offset perpendicular to the chord
@@ -256,7 +256,10 @@ pub fn draw(
         let is_hov = hit == Some(id);
         let col = e.kind.color();
 
-        let shape = node_shape();
+        let shape = match node_shape() {
+            NodeShape::ByType => shape_for_kind(e.kind),
+            other => other,
+        };
         if is_sel {
             fill_shape(&painter, p, r + 5.0, shape, Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), 40));
             stroke_shape(&painter, p, r + 4.0, shape, Stroke::new(if is_primary { 2.5 } else { 1.5 }, accent()));
@@ -268,7 +271,7 @@ pub fn draw(
         fill_shape(&painter, p, r * 0.62, shape, Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), 55));
         painter.text(p, egui::Align2::CENTER_CENTER, e.kind.icon(), icon_font.clone(), col);
 
-        if view.zoom > 0.45 {
+        if node_labels() && view.zoom > 0.45 {
             let label: String = {
                 let v = &e.value;
                 if v.chars().count() > 28 { format!("{}…", v.chars().take(27).collect::<String>()) }
@@ -345,6 +348,92 @@ pub fn grid_layout(graph: &mut Graph) {
     }
 }
 
+fn undirected_adj(graph: &Graph) -> std::collections::HashMap<u64, Vec<u64>> {
+    let mut adj: std::collections::HashMap<u64, Vec<u64>> =
+        graph.entities.keys().map(|&k| (k, Vec::new())).collect();
+    for e in &graph.edges {
+        if adj.contains_key(&e.from) && adj.contains_key(&e.to) {
+            adj.get_mut(&e.from).unwrap().push(e.to);
+            adj.get_mut(&e.to).unwrap().push(e.from);
+        }
+    }
+    adj
+}
+
+/// BFS levels from the highest-degree node → a top-down hierarchy.
+pub fn tree_layout(graph: &mut Graph) {
+    if graph.entities.len() < 2 { return; }
+    let adj = undirected_adj(graph);
+    let root = *adj.iter().max_by_key(|(_, v)| v.len()).map(|(k, _)| k).unwrap();
+
+    let mut level: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
+    let mut queue = std::collections::VecDeque::from([root]);
+    level.insert(root, 0);
+    while let Some(n) = queue.pop_front() {
+        let d = level[&n];
+        for &m in &adj[&n] {
+            if !level.contains_key(&m) { level.insert(m, d + 1); queue.push_back(m); }
+        }
+    }
+    // place disconnected nodes on a trailing level
+    let maxlvl = level.values().copied().max().unwrap_or(0);
+    for id in graph.entities.keys().copied().collect::<Vec<_>>() {
+        level.entry(id).or_insert(maxlvl + 1);
+    }
+    // group by level and spread on x
+    let mut by_level: std::collections::BTreeMap<usize, Vec<u64>> = std::collections::BTreeMap::new();
+    for (id, l) in &level { by_level.entry(*l).or_default().push(*id); }
+    let (vstep, hstep) = (130.0, 150.0);
+    for (l, ids) in by_level {
+        let mut ids = ids; ids.sort_unstable();
+        let off = (ids.len() as f32 - 1.0) * hstep * 0.5;
+        for (i, id) in ids.iter().enumerate() {
+            if let Some(e) = graph.entities.get_mut(id) {
+                e.pos = Pos2::new(i as f32 * hstep - off, l as f32 * vstep);
+                e.pinned = false;
+            }
+        }
+    }
+}
+
+/// Concentric rings by BFS distance from the highest-degree node.
+pub fn radial_layout(graph: &mut Graph) {
+    if graph.entities.is_empty() { return; }
+    let adj = undirected_adj(graph);
+    let root = *adj.iter().max_by_key(|(_, v)| v.len()).map(|(k, _)| k).unwrap();
+    let mut dist: std::collections::HashMap<u64, usize> = std::collections::HashMap::new();
+    let mut queue = std::collections::VecDeque::from([root]);
+    dist.insert(root, 0);
+    while let Some(n) = queue.pop_front() {
+        let d = dist[&n];
+        for &m in &adj[&n] {
+            if !dist.contains_key(&m) { dist.insert(m, d + 1); queue.push_back(m); }
+        }
+    }
+    let maxd = dist.values().copied().max().unwrap_or(0);
+    for id in graph.entities.keys().copied().collect::<Vec<_>>() {
+        dist.entry(id).or_insert(maxd + 1);
+    }
+    let mut by_ring: std::collections::BTreeMap<usize, Vec<u64>> = std::collections::BTreeMap::new();
+    for (id, d) in &dist { by_ring.entry(*d).or_default().push(*id); }
+    for (d, ids) in by_ring {
+        let mut ids = ids; ids.sort_unstable();
+        if d == 0 {
+            if let Some(e) = graph.entities.get_mut(&ids[0]) { e.pos = Pos2::ZERO; e.pinned = false; }
+            continue;
+        }
+        let radius = d as f32 * 170.0;
+        let n = ids.len();
+        for (i, id) in ids.iter().enumerate() {
+            let a = std::f32::consts::TAU * i as f32 / n as f32;
+            if let Some(e) = graph.entities.get_mut(id) {
+                e.pos = Pos2::new(radius * a.cos(), radius * a.sin());
+                e.pinned = false;
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::auto_layout;
@@ -367,6 +456,28 @@ mod tests {
     }
 }
 
+fn regular(c: Pos2, r: f32, sides: usize) -> Vec<Pos2> {
+    (0..sides).map(|i| {
+        let a = std::f32::consts::TAU * i as f32 / sides as f32 - std::f32::consts::FRAC_PI_2;
+        egui::pos2(c.x + r * a.cos(), c.y + r * a.sin())
+    }).collect()
+}
+
+/// Resolve the concrete shape for a node, expanding `ByType` to a per-kind shape.
+pub fn shape_for_kind(kind: super::model::Kind) -> NodeShape {
+    use super::model::Kind::*;
+    match kind {
+        Domain | Website | Phrase            => NodeShape::Circle,
+        Ip | Netblock | MacAddress           => NodeShape::Square,
+        Email | Phone                        => NodeShape::Diamond,
+        Person | Username | Social           => NodeShape::Hexagon,
+        Organization                         => NodeShape::Pentagon,
+        Location | Coordinate                => NodeShape::Triangle,
+        Cve | Service | OperatingSystem | Port => NodeShape::Octagon,
+        Asn | File | Document | Hash | BtcAddress => NodeShape::Square,
+    }
+}
+
 fn shape_pts(c: Pos2, r: f32, shape: NodeShape) -> Vec<Pos2> {
     match shape {
         NodeShape::Square => {
@@ -374,14 +485,14 @@ fn shape_pts(c: Pos2, r: f32, shape: NodeShape) -> Vec<Pos2> {
             vec![egui::pos2(c.x - k, c.y - k), egui::pos2(c.x + k, c.y - k),
                  egui::pos2(c.x + k, c.y + k), egui::pos2(c.x - k, c.y + k)]
         }
-        NodeShape::Diamond => vec![
+        NodeShape::Diamond  => vec![
             egui::pos2(c.x, c.y - r), egui::pos2(c.x + r, c.y),
             egui::pos2(c.x, c.y + r), egui::pos2(c.x - r, c.y)],
-        NodeShape::Hexagon => (0..6).map(|i| {
-            let a = std::f32::consts::PI / 3.0 * i as f32 - std::f32::consts::FRAC_PI_2;
-            egui::pos2(c.x + r * a.cos(), c.y + r * a.sin())
-        }).collect(),
-        NodeShape::Circle => Vec::new(),
+        NodeShape::Triangle => regular(c, r, 3),
+        NodeShape::Pentagon => regular(c, r, 5),
+        NodeShape::Hexagon  => regular(c, r, 6),
+        NodeShape::Octagon  => regular(c, r, 8),
+        NodeShape::Circle | NodeShape::ByType => Vec::new(),
     }
 }
 

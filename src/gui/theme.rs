@@ -9,13 +9,20 @@ use serde::{Deserialize, Serialize};
 use std::cell::Cell;
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum NodeShape { Circle, Square, Diamond, Hexagon }
+pub enum NodeShape { Circle, Square, Diamond, Triangle, Pentagon, Hexagon, Octagon, ByType }
 
 impl NodeShape {
-    pub const ALL: [NodeShape; 4] = [NodeShape::Circle, NodeShape::Square, NodeShape::Diamond, NodeShape::Hexagon];
+    pub const ALL: [NodeShape; 8] = [
+        NodeShape::Circle, NodeShape::Square, NodeShape::Diamond, NodeShape::Triangle,
+        NodeShape::Pentagon, NodeShape::Hexagon, NodeShape::Octagon, NodeShape::ByType,
+    ];
     pub fn label(self) -> &'static str {
-        match self { NodeShape::Circle=>"Circle", NodeShape::Square=>"Square",
-                     NodeShape::Diamond=>"Diamond", NodeShape::Hexagon=>"Hexagon" }
+        match self {
+            NodeShape::Circle=>"Circle", NodeShape::Square=>"Square",
+            NodeShape::Diamond=>"Diamond", NodeShape::Triangle=>"Triangle",
+            NodeShape::Pentagon=>"Pentagon", NodeShape::Hexagon=>"Hexagon",
+            NodeShape::Octagon=>"Octagon", NodeShape::ByType=>"By type",
+        }
     }
 }
 
@@ -75,6 +82,8 @@ pub struct UiConfig {
     pub font_scale:  f32,
     pub node_shape:  NodeShape,
     pub edge_curved: bool,
+    pub edge_width:  f32,
+    pub node_labels: bool,
     pub bg_style:    BgStyle,
     pub variant:     UiVariant,
 }
@@ -83,8 +92,8 @@ impl Default for UiConfig {
     fn default() -> Self {
         Self {
             node_radius: 22.0, show_grid: true, edge_labels: true, font_scale: 1.0,
-            node_shape: NodeShape::Circle, edge_curved: false, bg_style: BgStyle::Grid,
-            variant: UiVariant::Standard,
+            node_shape: NodeShape::Circle, edge_curved: false, edge_width: 1.3,
+            node_labels: true, bg_style: BgStyle::Grid, variant: UiVariant::Standard,
         }
     }
 }
@@ -305,6 +314,8 @@ pub fn show_grid()   -> bool      { config().show_grid }
 pub fn edge_labels() -> bool      { config().edge_labels }
 pub fn node_shape()  -> NodeShape { config().node_shape }
 pub fn edge_curved() -> bool      { config().edge_curved }
+pub fn edge_width()  -> f32       { config().edge_width }
+pub fn node_labels() -> bool      { config().node_labels }
 pub fn bg_style()    -> BgStyle   { config().bg_style }
 pub fn variant()     -> UiVariant { config().variant }
 

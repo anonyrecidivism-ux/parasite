@@ -582,18 +582,15 @@ impl GraphPanel {
                         .color(text_sec()).size(12.0));
                     ui.add_space(12.0);
 
-                    if toolbtn(ui, "⊹ Force").clicked() {
-                        canvas::auto_layout(&mut self.graph);
-                        self.needs_fit = true;
-                    }
-                    if toolbtn(ui, "○ Circle").clicked() {
-                        canvas::circle_layout(&mut self.graph);
-                        self.needs_fit = true;
-                    }
-                    if toolbtn(ui, "▦ Grid").clicked() {
-                        canvas::grid_layout(&mut self.graph);
-                        self.needs_fit = true;
-                    }
+                    let mut did_layout = false;
+                    ui.menu_button(RichText::new("⊹ Layout ▾").color(text_sec()).size(12.0), |ui| {
+                        if ui.button("Force-directed").clicked() { canvas::auto_layout(&mut self.graph); did_layout = true; ui.close_menu(); }
+                        if ui.button("Circle").clicked()         { canvas::circle_layout(&mut self.graph); did_layout = true; ui.close_menu(); }
+                        if ui.button("Grid").clicked()           { canvas::grid_layout(&mut self.graph); did_layout = true; ui.close_menu(); }
+                        if ui.button("Tree / hierarchical").clicked() { canvas::tree_layout(&mut self.graph); did_layout = true; ui.close_menu(); }
+                        if ui.button("Radial / concentric").clicked() { canvas::radial_layout(&mut self.graph); did_layout = true; ui.close_menu(); }
+                    });
+                    if did_layout { self.needs_fit = true; }
                     if toolbtn(ui, "⤢ Fit").clicked() {
                         self.needs_fit = true;
                     }
@@ -635,7 +632,9 @@ impl GraphPanel {
     fn palette(&mut self, ctx: &egui::Context) {
         if !super::theme::variant().show_palette() { return; }
         egui::SidePanel::left("graph_palette")
-            .exact_width(super::theme::variant().palette_width())
+            .resizable(true)
+            .default_width(super::theme::variant().palette_width())
+            .width_range(140.0..=340.0)
             .frame(egui::Frame::none().fill(bg_sidebar()).inner_margin(Margin::same(0.0)))
             .show(ctx, |ui| {
                 egui::Frame::none()
@@ -761,7 +760,9 @@ impl GraphPanel {
 
     fn details_panel(&mut self, ctx: &egui::Context) {
         egui::SidePanel::right("graph_details")
-            .exact_width(super::theme::variant().details_width())
+            .resizable(true)
+            .default_width(super::theme::variant().details_width())
+            .width_range(200.0..=460.0)
             .frame(egui::Frame::none().fill(bg_panel()).inner_margin(Margin::same(0.0)))
             .show(ctx, |ui| {
                 let Some(id) = self.sel.primary else {
@@ -819,8 +820,9 @@ impl GraphPanel {
                             .show(ui, |ui| {
                                 for (k, v) in &props {
                                     ui.label(RichText::new(k).color(text_sec()).size(11.5));
-                                    ui.label(RichText::new(v).color(text_pri()).size(11.5)
-                                        .font(FontId::new(11.5, FontFamily::Monospace)));
+                                    // wrap long values so they never widen the panel
+                                    ui.add(egui::Label::new(RichText::new(v).color(text_pri()).size(11.5)
+                                        .font(FontId::new(11.5, FontFamily::Monospace))).wrap());
                                     ui.end_row();
                                 }
                             });

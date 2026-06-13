@@ -17,10 +17,31 @@ fn icon_svg() -> String {
         .replace("rgb(255, 255, 255)", "rgb(20,17,15)")   // hollow core → dark
 }
 
+pub const BANNER: &str = r#"
+   ╔═══════════════════════════════════════════════╗
+       ◍  p a r a s i t e   —   OSINT graph
+       a free, open-source Maltego alternative
+   ╚═══════════════════════════════════════════════╝
+        \\   ◍╍╍◍        infect · expand · pivot
+         \\ ◍╍◍ ◍╍◍
+          ◍╍◍ ◍ ◍╍◍     74+ transforms · 11 machines
+         ◍╍◍ ◍╍◍ ◍
+"#;
+
+pub fn print_banner() {
+    println!("{BANNER}");
+    println!("  tip: run `parasitephp --setup` to auto-install the OSINT CLI tools");
+    println!("       (holehe, sherlock, maigret, …) used by some transforms.\n");
+}
+
 /// Handle install-related CLI flags. Returns `true` if the program should exit
-/// immediately (e.g. `--install` / `--uninstall` were handled).
+/// immediately (e.g. `--install` / `--uninstall` / `--setup` were handled).
 pub fn handle_cli() -> bool {
     let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--setup") {
+        setup();
+        return true;
+    }
     if args.iter().any(|a| a == "--uninstall") {
         uninstall();
         return true;
@@ -42,6 +63,46 @@ pub fn handle_cli() -> bool {
 #[cfg(target_os = "linux")]
 fn home() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
+}
+
+/// Download & install the optional OSINT CLI tools the transforms can use.
+pub fn setup() {
+    use std::process::Command;
+    print_banner();
+    println!("⇣  Installing OSINT tools (this can take a minute)…\n");
+
+    // Python tools via pip (user site).
+    let pip_tools = ["holehe", "maigret", "sherlock-project"];
+    let pip = if Command::new("pip").arg("--version").output().is_ok() { "pip" } else { "pip3" };
+    for t in pip_tools {
+        print!("  • {t} … ");
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+        let ok = Command::new(pip)
+            .args(["install", "--user", "--break-system-packages", "--upgrade", t])
+            .status().map(|s| s.success()).unwrap_or(false);
+        println!("{}", if ok { "✓" } else { "✗ (install Python/pip and retry)" });
+    }
+
+    // Go tools (optional) — only if `go` is present.
+    if Command::new("go").arg("version").output().is_ok() {
+        for t in ["github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest",
+                  "github.com/tomnomnom/waybackurls@latest"] {
+            let short = t.rsplit('/').next().unwrap_or(t).split('@').next().unwrap_or(t);
+            print!("  • {short} (go) … ");
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+            let ok = Command::new("go").args(["install", t]).status().map(|s| s.success()).unwrap_or(false);
+            println!("{}", if ok { "✓" } else { "✗" });
+        }
+    } else {
+        println!("  • subfinder/waybackurls: install Go then `go install …` (skipped)");
+    }
+
+    // Make sure the parasite engine + desktop entry are in place.
+    match install(false) {
+        Ok(p) => println!("\n✓  desktop entry: {p}"),
+        Err(e) => println!("\n✗  desktop install: {e}"),
+    }
+    println!("\n✓  setup done. Launch with `parasitephp` or from your app menu.");
 }
 
 /// Install desktop entry + icon, copying the binaries to a stable location.

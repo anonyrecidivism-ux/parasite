@@ -177,8 +177,12 @@ impl Shell {
                         });
                 });
 
+                changed |= ui.add(egui::Slider::new(&mut self.settings.edge_width, 0.5..=4.0)
+                    .text("edge thickness")).changed();
                 changed |= ui.checkbox(&mut self.settings.edge_curved,
                     RichText::new("curved edges").color(text_pri())).changed();
+                changed |= ui.checkbox(&mut self.settings.node_labels,
+                    RichText::new("node labels").color(text_pri())).changed();
                 changed |= ui.checkbox(&mut self.settings.show_grid,
                     RichText::new("show background pattern").color(text_pri())).changed();
                 changed |= ui.checkbox(&mut self.settings.edge_labels,
@@ -322,11 +326,13 @@ fn augment_path() {
 }
 
 pub fn run() -> eframe::Result<()> {
+    install::print_banner();
+
     // Make sure user-installed CLI tools are on PATH (desktop-menu launches often
     // have a minimal PATH that omits ~/.local/bin).
     augment_path();
 
-    // Desktop integration / CLI flags (--install, --uninstall, --no-install).
+    // Desktop integration / CLI flags (--install, --uninstall, --no-install, --setup).
     if install::handle_cli() {
         return Ok(());
     }

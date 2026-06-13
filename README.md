@@ -49,9 +49,17 @@ A first-run **welcome screen** walks you through the basics. Open **⚙ Settings
   **background style** (grid / dots / plain).
 - **Node size**, **font scale** and **edge-label** toggles.
 
-Plus **3 layout algorithms** (force-directed / circle / grid), a **table view**
-of all entities, and **PNG/PDF/CSV** export. Everything persists to
+- **8 node shapes** (circle / square / diamond / triangle / pentagon / hexagon /
+  octagon / **by type** — a distinct shape per entity kind).
+- **Edge thickness**, curved edges, node-label toggle.
+
+Panels are **resizable** (drag their edges). Plus **5 layout algorithms**
+(force-directed / circle / grid / tree / radial), a **table view** of all
+entities, and **PNG/PDF/CSV** export. Everything persists to
 `~/.config/parasite/settings.json`.
+
+Run `parasitephp --setup` to auto-install the optional OSINT CLI tools
+(holehe, sherlock, maigret, subfinder, waybackurls).
 
 ### Self-install
 On first launch (Linux), parasite installs a desktop entry + icon into your

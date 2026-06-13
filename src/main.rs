@@ -1,3 +1,7 @@
+// The engine carries some scaffolding (config helpers, scheduler internals) that
+// isn't wired into every build path; silence those intentional dead-code notes.
+#![allow(dead_code)]
+
 mod config;
 mod crawler;
 mod eye;
