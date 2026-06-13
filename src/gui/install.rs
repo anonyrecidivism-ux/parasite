@@ -6,14 +6,16 @@
 #[cfg(target_os = "linux")]
 use std::path::PathBuf;
 
-const ICON_SVG: &str = r##"<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
-  <rect width="256" height="256" rx="40" fill="#14110f"/>
-  <polygon points="128,40 216,128 128,216 40,128" fill="#d97757"/>
-  <polygon points="128,86 170,128 128,170 86,128" fill="#14110f"/>
-  <polygon points="128,108 148,128 128,148 108,128" fill="#d97757"/>
-</svg>
-"##;
+/// The user's virus logo, with the CSS-variable fallback colours baked into the
+/// brand palette so desktop environments render it consistently.
+#[cfg(target_os = "linux")]
+fn icon_svg() -> String {
+    include_str!("../../assets/logo.svg")
+        .replace("rgb(127, 44, 40)", "rgb(217,119,87)")   // body / spots → coral
+        .replace("rgb(20, 20, 19)",  "rgb(60,52,46)")     // spikes
+        .replace("rgb(61, 61, 58)",  "rgb(120,108,96)")   // connections
+        .replace("rgb(255, 255, 255)", "rgb(20,17,15)")   // hollow core → dark
+}
 
 /// Handle install-related CLI flags. Returns `true` if the program should exit
 /// immediately (e.g. `--install` / `--uninstall` were handled).
@@ -76,7 +78,7 @@ pub fn install(force: bool) -> std::io::Result<String> {
         }
     }
 
-    fs::write(icon_dir.join("parasite.svg"), ICON_SVG)?;
+    fs::write(icon_dir.join("parasite.svg"), icon_svg())?;
 
     let entry = format!(
         "[Desktop Entry]\n\

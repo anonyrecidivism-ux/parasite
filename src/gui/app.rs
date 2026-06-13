@@ -456,7 +456,9 @@ impl GraphPanel {
                 ui.horizontal(|ui| {
                     let count = self.graph.entities.len();
                     let edges = self.graph.edges.len();
-                    ui.label(RichText::new(format!("◈  {count} entities · {edges} links"))
+                    super::logo::widget(ui, 8.0);
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(format!("{count} entities · {edges} links"))
                         .color(text_sec()).size(12.0));
                     ui.add_space(12.0);
 

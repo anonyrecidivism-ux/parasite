@@ -9,6 +9,7 @@ mod engine;
 mod export;
 mod install;
 mod keys;
+mod logo;
 mod model;
 mod settings;
 mod sherlock;
@@ -46,8 +47,8 @@ impl eframe::App for Shell {
                 .stroke(Stroke::new(1.0, border())))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("◈").color(accent()).size(16.0).strong());
-                    ui.add_space(3.0);
+                    logo::widget(ui, 12.0);
+                    ui.add_space(5.0);
                     ui.label(RichText::new("parasite").color(text_pri()).strong().size(15.0));
                     ui.label(RichText::new("OSINT graph · open-source Maltego").color(text_mut()).size(12.0));
 
@@ -231,7 +232,9 @@ impl Shell {
             .frame(egui::Frame::window(&ctx.style()).fill(bg_panel()).stroke(Stroke::new(1.5, accent_dark())))
             .show(ctx, |ui| {
                 ui.add_space(4.0);
-                ui.label(RichText::new("◈  An open-source, graph-based OSINT toolkit — a free Maltego alternative.")
+                ui.vertical_centered(|ui| { logo::widget(ui, 46.0); });
+                ui.add_space(6.0);
+                ui.label(RichText::new("An open-source, graph-based OSINT toolkit — a free Maltego alternative.")
                     .color(text_sec()).size(13.5));
                 ui.add_space(12.0);
 
@@ -310,19 +313,28 @@ pub fn run() -> eframe::Result<()> {
 }
 
 fn load_icon() -> egui::IconData {
-    let size: usize = 16;
+    // Rasterise the virus logo (body + spots) into a 64×64 window icon.
+    let size: usize = 64;
+    let cx = 32.0; let cy = 32.0; let s = 30.0 / 175.0; // svg→icon scale
+    let body = accent(); let bg = bg_app();
+    let spots  = [(295.0,155.0,22.0),(385.0,170.0,16.0),(315.0,245.0,24.0),
+                  (390.0,240.0,13.0),(355.0,195.0,10.0),(300.0,205.0,8.0)];
+    let hl     = [(290.0,150.0,9.0),(382.0,167.0,6.0),(310.0,240.0,10.0),(388.0,237.0,5.0)];
+
     let mut rgba = vec![0u8; size * size * 4];
     for y in 0..size {
         for x in 0..size {
-            let cx = x as f32 - 7.5;
-            let cy = y as f32 - 7.5;
-            let dist = (cx * cx + cy * cy).sqrt();
-            let idx = (y * size + x) * 4;
-            if dist < 6.5 {
-                rgba[idx]     = 217;
-                rgba[idx + 1] = 119;
-                rgba[idx + 2] = 87;
-                rgba[idx + 3] = 255;
+            let sx = 340.0 + (x as f32 - cx) / s;
+            let sy = 200.0 + (y as f32 - cy) / s;
+            let d2 = |px: f32, py: f32| (sx - px).powi(2) + (sy - py).powi(2);
+            let mut col: Option<Color32> = None;
+            if d2(340.0, 200.0) <= 110.0 * 110.0 { col = Some(body); }
+            if d2(340.0, 200.0) <= 96.0 * 96.0   { col = Some(bg);   }
+            for (px, py, r) in spots { if d2(px, py) <= r * r { col = Some(body); } }
+            for (px, py, r) in hl    { if d2(px, py) <= r * r { col = Some(bg);   } }
+            if let Some(c) = col {
+                let i = (y * size + x) * 4;
+                rgba[i] = c.r(); rgba[i+1] = c.g(); rgba[i+2] = c.b(); rgba[i+3] = 255;
             }
         }
     }
