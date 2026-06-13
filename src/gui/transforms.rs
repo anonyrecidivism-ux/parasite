@@ -9,6 +9,7 @@ use std::time::Duration;
 use regex::Regex;
 use url::Url;
 
+use super::keys;
 use super::model::Kind;
 use super::sherlock;
 
@@ -65,6 +66,14 @@ pub const TRANSFORMS: &[TransformDef] = &[
                    desc: "generate look-alike domains (typo/TLD swaps)" },
     TransformDef { id: "dom_emails",   name: "Harvest Emails",     applies: Kind::Domain,
                    desc: "fetch the site and extract email addresses" },
+    TransformDef { id: "dom_hackertarget", name: "Subdomains (HackerTarget)", applies: Kind::Domain,
+                   desc: "host search → subdomains + IPs (free API)" },
+    TransformDef { id: "dom_hunter",   name: "Emails (Hunter.io)", applies: Kind::Domain,
+                   desc: "domain email search — needs Hunter.io key" },
+    TransformDef { id: "dom_vt",       name: "VirusTotal Report",  applies: Kind::Domain,
+                   desc: "reputation & detections — needs VirusTotal key" },
+    TransformDef { id: "dom_pivots",   name: "Search Links",       applies: Kind::Domain,
+                   desc: "Shodan, Censys, urlscan, SecurityTrails… (open in browser)" },
     // ── Website ───────────────────────────────────────────────────────────────
     TransformDef { id: "web_fetch",    name: "Fetch & Fingerprint",applies: Kind::Website,
                    desc: "HTTP GET: status, server, title, tech" },
@@ -89,12 +98,22 @@ pub const TRANSFORMS: &[TransformDef] = &[
                    desc: "the local part as a username to hunt" },
     TransformDef { id: "mail_gravatar",name: "Gravatar Profile",   applies: Kind::Email,
                    desc: "check for a Gravatar tied to this email" },
+    TransformDef { id: "email_hibp",   name: "Breaches (HIBP)",    applies: Kind::Email,
+                   desc: "Have I Been Pwned breaches — needs HIBP key" },
+    TransformDef { id: "email_pivots", name: "Search Links",       applies: Kind::Email,
+                   desc: "HIBP, EmailRep, Hunter, IntelX, Google (open in browser)" },
     // ── Person ────────────────────────────────────────────────────────────────
     TransformDef { id: "person_user",  name: "To Username Guesses",applies: Kind::Person,
                    desc: "generate likely usernames from the name" },
+    TransformDef { id: "person_pivots",name: "Search Links",       applies: Kind::Person,
+                   desc: "Google, LinkedIn, Twitter, Pipl (open in browser)" },
     // ── Username ──────────────────────────────────────────────────────────────
     TransformDef { id: "user_hunt",    name: "Hunt Accounts",      applies: Kind::Username,
                    desc: "Sherlock-style search across 50 social networks" },
+    TransformDef { id: "user_github",  name: "GitHub Profile",     applies: Kind::Username,
+                   desc: "GitHub user: name, org, location, blog (free API)" },
+    TransformDef { id: "user_pivots",  name: "Search Links",       applies: Kind::Username,
+                   desc: "search engines & people-search (open in browser)" },
     // ── Social ────────────────────────────────────────────────────────────────
     TransformDef { id: "social_fetch", name: "Fetch & Fingerprint",applies: Kind::Social,
                    desc: "HTTP GET the profile: status, title" },
@@ -105,6 +124,14 @@ pub const TRANSFORMS: &[TransformDef] = &[
                    desc: "PTR record → hostname" },
     TransformDef { id: "ip_geo",       name: "Geo / ASN (ipinfo)", applies: Kind::Ip,
                    desc: "city, country, org & ASN via ipinfo.io" },
+    TransformDef { id: "ip_revip",     name: "Reverse IP (HackerTarget)", applies: Kind::Ip,
+                   desc: "other domains hosted on this IP (free API)" },
+    TransformDef { id: "ip_shodan",    name: "Shodan Host",        applies: Kind::Ip,
+                   desc: "open ports, services, hostnames — needs Shodan key" },
+    TransformDef { id: "ip_vt",        name: "VirusTotal Report",  applies: Kind::Ip,
+                   desc: "reputation & detections — needs VirusTotal key" },
+    TransformDef { id: "ip_abuse",     name: "AbuseIPDB Check",    applies: Kind::Ip,
+                   desc: "abuse score & reports — needs AbuseIPDB key" },
     TransformDef { id: "ip_website",   name: "To Website",         applies: Kind::Ip,
                    desc: "build http:// website for this IP" },
     // ── ASN ───────────────────────────────────────────────────────────────────
@@ -302,6 +329,22 @@ pub async fn run(id: &str, value: &str) -> Outcome {
         "asn_prefixes" => asn_prefixes(&v, &mut o).await,
         "phone_info" => phone_info(&v, &mut o),
         "hash_lookup" => hash_lookup(&v, &mut o),
+        // ── awesome-osint style search/pivot links ──
+        "dom_pivots"    => pivots(&v, "domain", &mut o),
+        "email_pivots"  => pivots(&v, "email",  &mut o),
+        "user_pivots"   => pivots(&v, "user",   &mut o),
+        "person_pivots" => pivots(&v, "person", &mut o),
+        // ── keyless real APIs ──
+        "user_github"      => github_user(&v, &mut o).await,
+        "dom_hackertarget" => hackertarget_hosts(&v, &mut o).await,
+        "ip_revip"         => hackertarget_revip(&v, &mut o).await,
+        // ── keyed integrations ──
+        "ip_shodan"  => shodan_host(&v, &mut o).await,
+        "ip_vt"      => virustotal(&v, "ip", &mut o).await,
+        "dom_vt"     => virustotal(&v, "domain", &mut o).await,
+        "email_hibp" => hibp(&v, &mut o).await,
+        "ip_abuse"   => abuseipdb(&v, &mut o).await,
+        "dom_hunter" => hunter(&v, &mut o).await,
         other => o.log.push(format!("✗  unknown transform '{other}'")),
     }
 
@@ -910,6 +953,260 @@ async fn find_files(url: &str, o: &mut Outcome) {
         }
     }
     if o.items.is_empty() { o.log.push("◦  nothing exposed".into()); }
+}
+
+// ── helpers for the integrations ───────────────────────────────────────────────
+
+/// minimal percent-encoding for query strings
+fn enc(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            b' ' => out.push_str("%20"),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+fn key(name: &str, o: &mut Outcome) -> Option<String> {
+    let k = keys::get(name);
+    if k.trim().is_empty() {
+        o.log.push(format!("✗  set the {name} API key in ⚙ Settings to use this"));
+        None
+    } else { Some(k) }
+}
+
+/// Search / pivot links — the awesome-osint approach: hand the analyst ready-made
+/// queries on external services as Website entities they can open in a browser.
+fn pivots(value: &str, kind: &str, o: &mut Outcome) {
+    let v = value.trim();
+    let e = enc(v);
+    let links: &[(&str, String)] = &match kind {
+        "domain" => vec![
+            ("Shodan",         format!("https://www.shodan.io/search?query={e}")),
+            ("Censys",         format!("https://search.censys.io/search?resource=hosts&q={e}")),
+            ("urlscan.io",     format!("https://urlscan.io/domain/{e}")),
+            ("SecurityTrails", format!("https://securitytrails.com/domain/{e}/dns")),
+            ("VirusTotal",     format!("https://www.virustotal.com/gui/domain/{e}")),
+            ("crt.sh",         format!("https://crt.sh/?q=%25.{e}")),
+            ("Wayback",        format!("https://web.archive.org/web/*/{e}/*")),
+        ],
+        "email" => vec![
+            ("HaveIBeenPwned", format!("https://haveibeenpwned.com/account/{e}")),
+            ("EmailRep",       format!("https://emailrep.io/{e}")),
+            ("Hunter",         format!("https://hunter.io/email-verifier/{e}")),
+            ("IntelX",         format!("https://intelx.io/?s={e}")),
+            ("Google",         format!("https://www.google.com/search?q=%22{e}%22")),
+        ],
+        "user" => vec![
+            ("Google",     format!("https://www.google.com/search?q=%22{e}%22")),
+            ("DuckDuckGo", format!("https://duckduckgo.com/?q=%22{e}%22")),
+            ("WhatsMyName",format!("https://whatsmyname.app/")),
+            ("Twitter",    format!("https://twitter.com/search?q={e}")),
+            ("Reddit",     format!("https://www.reddit.com/search/?q={e}")),
+            ("GitHub",     format!("https://github.com/search?q={e}&type=users")),
+        ],
+        "person" => vec![
+            ("Google",   format!("https://www.google.com/search?q=%22{e}%22")),
+            ("LinkedIn", format!("https://www.google.com/search?q=%22{e}%22+site:linkedin.com")),
+            ("Twitter",  format!("https://twitter.com/search?q={e}")),
+            ("Facebook", format!("https://www.facebook.com/search/people/?q={e}")),
+            ("TruePeopleSearch", format!("https://www.truepeoplesearch.com/results?name={e}")),
+        ],
+        _ => vec![],
+    };
+    for (name, url) in links {
+        o.log.push(format!("◦  {name}: {url}"));
+        o.items.push(NewItem { kind: Kind::Website, value: url.clone(),
+            edge: (*name).into(), props: vec![("service".into(), (*name).into())] });
+    }
+    o.log.push(format!("◦  {} search link(s) — open them from the details panel", links.len()));
+}
+
+// ── GitHub user (free) ─────────────────────────────────────────────────────────
+async fn github_user(user: &str, o: &mut Outcome) {
+    let url = format!("https://api.github.com/users/{}", enc(user));
+    let resp = match client().get(&url).header("Accept", "application/vnd.github+json").send().await {
+        Ok(r) => r, Err(e) => { o.log.push(format!("✗  {e}")); return; }
+    };
+    if !resp.status().is_success() {
+        o.log.push(format!("✗  GitHub: HTTP {}", resp.status().as_u16())); return;
+    }
+    let j: serde_json::Value = serde_json::from_str(&resp.text().await.unwrap_or_default()).unwrap_or_default();
+    let s = |k: &str| j.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    o.log.push(format!("✓  GitHub user '{}'", s("login")));
+    for (label, k) in [("name","name"),("bio","bio"),("company","company"),
+                       ("location","location"),("blog","blog")] {
+        let val = s(k);
+        if !val.is_empty() { o.props.push((label.into(), val)); }
+    }
+    if let Some(n) = j.get("public_repos").and_then(|v| v.as_u64()) { o.props.push(("public_repos".into(), n.to_string())); }
+    if let Some(n) = j.get("followers").and_then(|v| v.as_u64()) { o.props.push(("followers".into(), n.to_string())); }
+    if !s("name").is_empty()     { o.item(Kind::Person, s("name"), "real name"); }
+    if !s("company").is_empty()  { o.item(Kind::Organization, s("company").trim_start_matches('@').to_string(), "company"); }
+    if !s("location").is_empty() { o.item(Kind::Location, s("location"), "location"); }
+    if !s("blog").is_empty()     { o.item(Kind::Website, ensure_scheme(&s("blog")), "blog"); }
+    if !s("email").is_empty()    { o.item(Kind::Email, s("email"), "public email"); }
+    o.item(Kind::Social, format!("https://github.com/{}", s("login")), "github");
+}
+
+// ── HackerTarget (free, rate-limited) ──────────────────────────────────────────
+async fn hackertarget_hosts(domain: &str, o: &mut Outcome) {
+    let url = format!("https://api.hackertarget.com/hostsearch/?q={}", enc(domain));
+    let body = match client().get(&url).send().await {
+        Ok(r) => r.text().await.unwrap_or_default(), Err(e) => { o.log.push(format!("✗  {e}")); return; }
+    };
+    if body.contains("API count exceeded") || body.contains("error") {
+        o.log.push(format!("✗  HackerTarget: {}", body.lines().next().unwrap_or(""))); return;
+    }
+    let mut n = 0;
+    for line in body.lines() {
+        if let Some((host, ip)) = line.split_once(',') {
+            n += 1;
+            o.item(Kind::Domain, host.trim().to_string(), "subdomain");
+            if ip.trim().parse::<std::net::Ipv4Addr>().is_ok() {
+                o.item(Kind::Ip, ip.trim().to_string(), "resolves to");
+            }
+        }
+    }
+    o.log.push(format!("✓  {n} host(s) from HackerTarget"));
+}
+
+async fn hackertarget_revip(ip: &str, o: &mut Outcome) {
+    let url = format!("https://api.hackertarget.com/reverseiplookup/?q={}", enc(ip));
+    let body = match client().get(&url).send().await {
+        Ok(r) => r.text().await.unwrap_or_default(), Err(e) => { o.log.push(format!("✗  {e}")); return; }
+    };
+    if body.contains("API count exceeded") || body.contains("error") || body.contains("No DNS") {
+        o.log.push(format!("◦  HackerTarget: {}", body.lines().next().unwrap_or(""))); return;
+    }
+    let mut n = 0;
+    for line in body.lines() {
+        let h = line.trim();
+        if !h.is_empty() { n += 1; o.item(Kind::Domain, h.to_string(), "hosted on"); }
+    }
+    o.log.push(format!("✓  {n} domain(s) on {ip}"));
+}
+
+// ── Shodan (key) ───────────────────────────────────────────────────────────────
+async fn shodan_host(ip: &str, o: &mut Outcome) {
+    let Some(k) = key("shodan", o) else { return };
+    let url = format!("https://api.shodan.io/shodan/host/{}?key={}", enc(ip), enc(&k));
+    let resp = match client().get(&url).send().await {
+        Ok(r) => r, Err(e) => { o.log.push(format!("✗  {e}")); return; }
+    };
+    if !resp.status().is_success() { o.log.push(format!("✗  Shodan: HTTP {}", resp.status().as_u16())); return; }
+    let j: serde_json::Value = serde_json::from_str(&resp.text().await.unwrap_or_default()).unwrap_or_default();
+    for (label, k) in [("org","org"),("isp","isp"),("os","os"),("country","country_name")] {
+        if let Some(val) = j.get(k).and_then(|v| v.as_str()) {
+            o.props.push((label.into(), val.into()));
+        }
+    }
+    if let Some(org) = j.get("org").and_then(|v| v.as_str()) { o.item(Kind::Organization, org.to_string(), "org"); }
+    if let Some(hs) = j.get("hostnames").and_then(|v| v.as_array()) {
+        for h in hs { if let Some(s) = h.as_str() { o.item(Kind::Domain, s.to_string(), "hostname"); } }
+    }
+    if let Some(ports) = j.get("ports").and_then(|v| v.as_array()) {
+        for p in ports { if let Some(n) = p.as_u64() { o.item(Kind::Port, n.to_string(), "open port"); } }
+        o.log.push(format!("✓  Shodan: {} open port(s)", ports.len()));
+    } else { o.log.push("◦  Shodan returned no ports".into()); }
+}
+
+// ── VirusTotal (key) ───────────────────────────────────────────────────────────
+async fn virustotal(value: &str, kind: &str, o: &mut Outcome) {
+    let Some(k) = key("virustotal", o) else { return };
+    let url = if kind == "ip" {
+        format!("https://www.virustotal.com/api/v3/ip_addresses/{}", enc(value))
+    } else {
+        format!("https://www.virustotal.com/api/v3/domains/{}", enc(value))
+    };
+    let resp = match client().get(&url).header("x-apikey", k).send().await {
+        Ok(r) => r, Err(e) => { o.log.push(format!("✗  {e}")); return; }
+    };
+    if !resp.status().is_success() { o.log.push(format!("✗  VirusTotal: HTTP {}", resp.status().as_u16())); return; }
+    let j: serde_json::Value = serde_json::from_str(&resp.text().await.unwrap_or_default()).unwrap_or_default();
+    let a = j.pointer("/data/attributes");
+    if let Some(stats) = a.and_then(|x| x.get("last_analysis_stats")) {
+        let g = |k: &str| stats.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
+        o.log.push(format!("✓  VT: {} malicious / {} suspicious / {} harmless",
+            g("malicious"), g("suspicious"), g("harmless")));
+        o.props.push(("vt_malicious".into(), g("malicious").to_string()));
+        o.props.push(("vt_suspicious".into(), g("suspicious").to_string()));
+    }
+    if let Some(owner) = a.and_then(|x| x.get("as_owner")).and_then(|v| v.as_str()) {
+        o.item(Kind::Organization, owner.to_string(), "AS owner");
+    }
+    if let Some(c) = a.and_then(|x| x.get("country")).and_then(|v| v.as_str()) {
+        o.item(Kind::Location, c.to_string(), "country");
+    }
+}
+
+// ── Have I Been Pwned (key) ────────────────────────────────────────────────────
+async fn hibp(email: &str, o: &mut Outcome) {
+    let Some(k) = key("hibp", o) else { return };
+    let url = format!("https://haveibeenpwned.com/api/v3/breachedaccount/{}?truncateResponse=false", enc(email));
+    let resp = match client().get(&url)
+        .header("hibp-api-key", k).header("user-agent", "parasite-osint").send().await
+    {
+        Ok(r) => r, Err(e) => { o.log.push(format!("✗  {e}")); return; }
+    };
+    if resp.status().as_u16() == 404 { o.log.push("✓  no breaches found".into()); return; }
+    if !resp.status().is_success() { o.log.push(format!("✗  HIBP: HTTP {}", resp.status().as_u16())); return; }
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&resp.text().await.unwrap_or_default()).unwrap_or_default();
+    o.log.push(format!("⚠  {} breach(es)!", arr.len()));
+    o.props.push(("breaches".into(), arr.len().to_string()));
+    for b in arr {
+        let name = b.get("Name").and_then(|v| v.as_str()).unwrap_or("?");
+        let date = b.get("BreachDate").and_then(|v| v.as_str()).unwrap_or("");
+        o.item(Kind::Phrase, format!("{name} ({date})"), "breached in");
+    }
+}
+
+// ── AbuseIPDB (key) ────────────────────────────────────────────────────────────
+async fn abuseipdb(ip: &str, o: &mut Outcome) {
+    let Some(k) = key("abuseipdb", o) else { return };
+    let url = format!("https://api.abuseipdb.com/api/v2/check?ipAddress={}&maxAgeInDays=90", enc(ip));
+    let resp = match client().get(&url).header("Key", k).header("Accept", "application/json").send().await {
+        Ok(r) => r, Err(e) => { o.log.push(format!("✗  {e}")); return; }
+    };
+    if !resp.status().is_success() { o.log.push(format!("✗  AbuseIPDB: HTTP {}", resp.status().as_u16())); return; }
+    let j: serde_json::Value = serde_json::from_str(&resp.text().await.unwrap_or_default()).unwrap_or_default();
+    let d = j.get("data");
+    let g = |k: &str| d.and_then(|x| x.get(k));
+    if let Some(score) = g("abuseConfidenceScore").and_then(|v| v.as_u64()) {
+        o.log.push(format!("✓  abuse score {score}% ({} report(s))",
+            g("totalReports").and_then(|v| v.as_u64()).unwrap_or(0)));
+        o.props.push(("abuse_score".into(), format!("{score}%")));
+    }
+    if let Some(isp) = g("isp").and_then(|v| v.as_str()) { o.item(Kind::Organization, isp.to_string(), "ISP"); }
+    if let Some(dom) = g("domain").and_then(|v| v.as_str()) { if !dom.is_empty() { o.item(Kind::Domain, dom.to_string(), "domain"); } }
+    if let Some(cc) = g("countryCode").and_then(|v| v.as_str()) { o.item(Kind::Location, cc.to_string(), "country"); }
+}
+
+// ── Hunter.io (key) ────────────────────────────────────────────────────────────
+async fn hunter(domain: &str, o: &mut Outcome) {
+    let Some(k) = key("hunter", o) else { return };
+    let url = format!("https://api.hunter.io/v2/domain-search?domain={}&api_key={}", enc(domain), enc(&k));
+    let resp = match client().get(&url).send().await {
+        Ok(r) => r, Err(e) => { o.log.push(format!("✗  {e}")); return; }
+    };
+    if !resp.status().is_success() { o.log.push(format!("✗  Hunter: HTTP {}", resp.status().as_u16())); return; }
+    let j: serde_json::Value = serde_json::from_str(&resp.text().await.unwrap_or_default()).unwrap_or_default();
+    if let Some(org) = j.pointer("/data/organization").and_then(|v| v.as_str()) {
+        if !org.is_empty() { o.item(Kind::Organization, org.to_string(), "organization"); }
+    }
+    let mut n = 0;
+    if let Some(emails) = j.pointer("/data/emails").and_then(|v| v.as_array()) {
+        for e in emails {
+            if let Some(addr) = e.get("value").and_then(|v| v.as_str()) {
+                n += 1;
+                o.item(Kind::Email, addr.to_string(), "hunter");
+            }
+        }
+    }
+    o.log.push(format!("✓  Hunter.io: {n} email(s)"));
 }
 
 fn ensure_scheme(v: &str) -> String {

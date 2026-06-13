@@ -68,15 +68,22 @@ sign up for.
 
 | Entity    | Transforms |
 |-----------|------------|
-| Domain    | To Website · Resolve to IP · **Subdomains (crt.sh)** · Subdomains (brute) · **DNS Records (MX/NS/TXT)** · **WHOIS** · **Wayback URLs** · Google Dorks · Harvest Emails |
-| Website   | Fetch & Fingerprint · Extract Links · Extract Emails · Extract Phones · To Domain · Find Exposed Files · **robots.txt & Sitemap** · **Security Headers grade** |
-| Email     | To Domain · To Username · Gravatar Profile |
-| Person    | To Username Guesses |
-| Username  | **Hunt Accounts** — Sherlock-style search across ~50 social networks |
+| Domain    | To Website · Resolve to IP · Subdomains (crt.sh) · Subdomains (HackerTarget) · DNS Records · WHOIS · Wayback URLs · Google Dorks · Typosquats · Harvest Emails · **Hunter.io** · **VirusTotal** · Search Links |
+| Website   | Fetch & Fingerprint · Extract Links / Emails / Phones · To Domain · Find Exposed Files · robots.txt & Sitemap · Security Headers grade |
+| Email     | To Domain · To Username · Gravatar · **HaveIBeenPwned breaches** · Search Links |
+| Person    | To Username Guesses · Search Links |
+| Username  | **Hunt Accounts** (Sherlock-style, ~50 sites) · **GitHub Profile** · Search Links |
 | Social    | Fetch & Fingerprint |
-| IP        | Scan Common Ports · Reverse DNS (PTR) · **Geo / ASN (ipinfo)** · To Website |
+| IP        | Scan Ports · Reverse DNS · Geo/ASN · Reverse IP (HackerTarget) · **Shodan** · **VirusTotal** · **AbuseIPDB** · To Website |
+| ASN       | Announced Prefixes (RIPEstat) |
 | Phone     | Country / Region |
 | Hash      | Identify Algorithm · Dictionary Lookup |
+
+**API integrations** (add keys in ⚙ Settings → keys stay local): Shodan,
+VirusTotal, Have I Been Pwned, Hunter.io, AbuseIPDB. Many transforms work with
+**no key** (GitHub, HackerTarget, crt.sh, RIPEstat, Wayback…). **Search Links**
+transforms hand you ready-made queries on dozens of OSINT services (Shodan,
+Censys, urlscan, IntelX, LinkedIn…) as nodes you can **open in the browser**.
 
 Highlights:
 - **Hunt Accounts** is a self-contained, parallel re-implementation of

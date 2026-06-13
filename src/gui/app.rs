@@ -661,6 +661,19 @@ impl GraphPanel {
                     {
                         if let Some(e) = self.graph.entities.get_mut(&id) { e.value = value.clone(); }
                     }
+                    let lo = value.to_lowercase();
+                    if lo.starts_with("http://") || lo.starts_with("https://")
+                        || matches!(kind, Kind::Domain | Kind::Website | Kind::Social)
+                    {
+                        ui.add_space(6.0);
+                        if ui.add(egui::Button::new(RichText::new("↗  Open in browser").color(accent()).size(12.0))
+                            .fill(Color32::TRANSPARENT).stroke(Stroke::new(1.0, accent_dark()))
+                            .rounding(Rounding::same(5.0))).clicked()
+                        {
+                            let url = if lo.starts_with("http") { value.clone() } else { format!("https://{value}") };
+                            open_url(&url);
+                        }
+                    }
                 });
 
                 // Properties
@@ -1002,6 +1015,17 @@ fn harvest(text: &str) -> Vec<transforms::NewItem> {
         }
     }
     items
+}
+
+/// Open a URL in the system browser (Linux/macOS/Windows).
+fn open_url(url: &str) {
+    let url = url.to_string();
+    #[cfg(target_os = "linux")]
+    let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg(&url).spawn();
+    #[cfg(target_os = "windows")]
+    let _ = std::process::Command::new("cmd").args(["/C", "start", "", &url]).spawn();
 }
 
 fn truncate(s: &str, n: usize) -> String {

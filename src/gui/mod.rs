@@ -8,13 +8,14 @@ mod canvas;
 mod engine;
 mod export;
 mod install;
+mod keys;
 mod model;
 mod settings;
 mod sherlock;
 mod theme;
 mod transforms;
 
-use eframe::egui::{self, Color32, Margin, RichText, Rounding, Stroke};
+use eframe::egui::{self, Color32, FontFamily, FontId, Margin, RichText, Rounding, Stroke};
 use settings::Settings;
 use theme::*;
 
@@ -170,6 +171,27 @@ impl Shell {
                     RichText::new("edge labels").color(text_pri())).changed();
 
                 ui.add_space(12.0);
+                ui.collapsing(RichText::new("🔑 API KEYS (optional)").color(text_mut()).size(10.0).strong(), |ui| {
+                    ui.label(RichText::new("Enable extra integrations. Keys stay local in your settings file.")
+                        .color(text_mut()).size(10.5));
+                    ui.add_space(4.0);
+                    let mut field = |ui: &mut egui::Ui, label: &str, val: &mut String, changed: &mut bool| {
+                        ui.horizontal(|ui| {
+                            ui.add_sized([90.0, 18.0], egui::Label::new(
+                                RichText::new(label).color(text_sec()).size(11.5)));
+                            *changed |= ui.add(egui::TextEdit::singleline(val)
+                                .desired_width(200.0).password(true)
+                                .font(FontId::new(11.5, FontFamily::Monospace))).changed();
+                        });
+                    };
+                    field(ui, "Shodan",     &mut self.settings.api.shodan,     &mut changed);
+                    field(ui, "VirusTotal", &mut self.settings.api.virustotal, &mut changed);
+                    field(ui, "HaveIBeenPwned", &mut self.settings.api.hibp,   &mut changed);
+                    field(ui, "Hunter.io",  &mut self.settings.api.hunter,     &mut changed);
+                    field(ui, "AbuseIPDB",  &mut self.settings.api.abuseipdb,  &mut changed);
+                });
+
+                ui.add_space(8.0);
                 ui.separator();
                 ui.horizontal(|ui| {
                     if ui.button(RichText::new("↺ Reset to defaults").color(text_sec())).clicked() {

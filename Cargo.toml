@@ -1,6 +1,6 @@
 [package]
 name = "parasite"
-version = "1.0.0-beta.2"
+version = "1.0.0-beta.3"
 edition = "2021"
 description = "Open-source, graph-based OSINT & web-reconnaissance toolkit — a free alternative to Maltego"
 license = "MIT"
