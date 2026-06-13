@@ -5,7 +5,29 @@
 //! colour / node size / fonts can be customised on top of any preset.
 
 use eframe::egui::{self, Color32, FontFamily, FontId, Margin, Rounding, Stroke, Vec2};
+use serde::{Deserialize, Serialize};
 use std::cell::Cell;
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NodeShape { Circle, Square, Diamond, Hexagon }
+
+impl NodeShape {
+    pub const ALL: [NodeShape; 4] = [NodeShape::Circle, NodeShape::Square, NodeShape::Diamond, NodeShape::Hexagon];
+    pub fn label(self) -> &'static str {
+        match self { NodeShape::Circle=>"Circle", NodeShape::Square=>"Square",
+                     NodeShape::Diamond=>"Diamond", NodeShape::Hexagon=>"Hexagon" }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BgStyle { Grid, Dots, Plain }
+
+impl BgStyle {
+    pub const ALL: [BgStyle; 3] = [BgStyle::Grid, BgStyle::Dots, BgStyle::Plain];
+    pub fn label(self) -> &'static str {
+        match self { BgStyle::Grid=>"Grid", BgStyle::Dots=>"Dots", BgStyle::Plain=>"Plain" }
+    }
+}
 
 #[derive(Clone, Copy)]
 pub struct Palette {
@@ -38,11 +60,17 @@ pub struct UiConfig {
     pub show_grid:   bool,
     pub edge_labels: bool,
     pub font_scale:  f32,
+    pub node_shape:  NodeShape,
+    pub edge_curved: bool,
+    pub bg_style:    BgStyle,
 }
 
 impl Default for UiConfig {
     fn default() -> Self {
-        Self { node_radius: 22.0, show_grid: true, edge_labels: true, font_scale: 1.0 }
+        Self {
+            node_radius: 22.0, show_grid: true, edge_labels: true, font_scale: 1.0,
+            node_shape: NodeShape::Circle, edge_curved: false, bg_style: BgStyle::Grid,
+        }
     }
 }
 
@@ -186,9 +214,12 @@ pub fn c_err()       -> Color32 { current().c_err }
 pub fn c_warn()      -> Color32 { current().c_warn }
 pub fn c_info()      -> Color32 { current().c_info }
 
-pub fn node_radius() -> f32  { config().node_radius }
-pub fn show_grid()   -> bool { config().show_grid }
-pub fn edge_labels() -> bool { config().edge_labels }
+pub fn node_radius() -> f32       { config().node_radius }
+pub fn show_grid()   -> bool      { config().show_grid }
+pub fn edge_labels() -> bool      { config().edge_labels }
+pub fn node_shape()  -> NodeShape { config().node_shape }
+pub fn edge_curved() -> bool      { config().edge_curved }
+pub fn bg_style()    -> BgStyle   { config().bg_style }
 
 /// Install fonts once (idempotent enough to call again is fine).
 pub fn setup_fonts(ctx: &egui::Context) {

@@ -29,7 +29,8 @@ One unified, Maltego-style window:
   graph automatically (e.g. *Domain Footprint*, *Username Recon*, *Email →
   Identity*).
 - **Searchable entity list** in the sidebar — click to jump to a node.
-- **Save / load** graphs as JSON, **export** to CSV.
+- **Save / load** graphs as JSON, **export** to CSV, **PNG** and **PDF**.
+- **17 entity types** incl. Organization, Location, ASN and CVE.
 
 Both the in-process transforms **and** the 28 recon **operations** (the old
 `parasite` engine: crawling, host analysis, fuzzing, wordlists…) live in the
@@ -42,7 +43,9 @@ A first-run **welcome screen** walks you through the basics. Open **⚙ Settings
 (top-right) to customize:
 - **7 built-in themes**: Anthropic, Midnight, Matrix, Dracula, Nord, Solarized, Light.
 - **Custom accent colour** (full picker + quick swatches).
-- **Node size**, **font scale**, **grid** and **edge-label** toggles.
+- **Node shape** (circle / square / diamond / hexagon), **curved edges**,
+  **background style** (grid / dots / plain).
+- **Node size**, **font scale** and **edge-label** toggles.
 
 Everything persists to `~/.config/parasite/settings.json`.
 

@@ -61,6 +61,8 @@ pub const TRANSFORMS: &[TransformDef] = &[
                    desc: "known URLs from the Internet Archive (CDX)" },
     TransformDef { id: "dom_dork",     name: "Google Dorks",       applies: Kind::Domain,
                    desc: "generate useful search-engine dork queries" },
+    TransformDef { id: "dom_permute",  name: "Typosquat Permutations", applies: Kind::Domain,
+                   desc: "generate look-alike domains (typo/TLD swaps)" },
     TransformDef { id: "dom_emails",   name: "Harvest Emails",     applies: Kind::Domain,
                    desc: "fetch the site and extract email addresses" },
     // ── Website ───────────────────────────────────────────────────────────────
@@ -105,6 +107,9 @@ pub const TRANSFORMS: &[TransformDef] = &[
                    desc: "city, country, org & ASN via ipinfo.io" },
     TransformDef { id: "ip_website",   name: "To Website",         applies: Kind::Ip,
                    desc: "build http:// website for this IP" },
+    // ── ASN ───────────────────────────────────────────────────────────────────
+    TransformDef { id: "asn_prefixes", name: "Announced Prefixes", applies: Kind::Asn,
+                   desc: "netblocks announced by this ASN (RIPEstat)" },
     // ── Phone ─────────────────────────────────────────────────────────────────
     TransformDef { id: "phone_info",   name: "Country / Region",   applies: Kind::Phone,
                    desc: "guess country from the calling code" },
@@ -293,6 +298,8 @@ pub async fn run(id: &str, value: &str) -> Outcome {
         "web_robots" => robots(&v, &mut o).await,
         "web_headers" => security_headers(&v, &mut o).await,
         "ip_geo"     => ip_geo(&v, &mut o).await,
+        "dom_permute" => permute(&v, &mut o),
+        "asn_prefixes" => asn_prefixes(&v, &mut o).await,
         "phone_info" => phone_info(&v, &mut o),
         "hash_lookup" => hash_lookup(&v, &mut o),
         other => o.log.push(format!("✗  unknown transform '{other}'")),
@@ -418,11 +425,83 @@ async fn ip_geo(ip: &str, o: &mut Outcome) {
             o.props.push((label.into(), val));
         }
     }
+    // org looks like "AS15169 Google LLC" → split into ASN + Organization
     let org = get("org");
-    if !org.is_empty() { o.item(Kind::Phrase, org, "ASN / org"); }
+    if !org.is_empty() {
+        let (asn, name) = org.split_once(' ').unwrap_or((org.as_str(), ""));
+        if asn.starts_with("AS") { o.item(Kind::Asn, asn.to_string(), "ASN"); }
+        if !name.is_empty() { o.item(Kind::Organization, name.to_string(), "operated by"); }
+        if !asn.starts_with("AS") { o.item(Kind::Organization, org.clone(), "operated by"); }
+    }
+    // city/country → Location
+    let city = get("city"); let region = get("region"); let country = get("country");
+    let loc_label: Vec<String> = [city, region, country].into_iter().filter(|s| !s.is_empty()).collect();
+    if !loc_label.is_empty() { o.item(Kind::Location, loc_label.join(", "), "located in"); }
     let host = get("hostname");
     if !host.is_empty() { o.item(Kind::Domain, host, "hostname"); }
-    if j.get("city").is_none() { o.log.push("◦  ipinfo returned no data (rate-limited?)".into()); }
+    if j.get("city").is_none() && j.get("org").is_none() {
+        o.log.push("◦  ipinfo returned no data (rate-limited?)".into());
+    }
+}
+
+// ── Typosquat / look-alike domain permutations ─────────────────────────────────
+fn permute(domain: &str, o: &mut Outcome) {
+    let d = domain.trim().to_lowercase();
+    let (name, tld) = d.rsplit_once('.').unwrap_or((d.as_str(), "com"));
+    let mut out: Vec<String> = Vec::new();
+
+    // character omission
+    for i in 0..name.len() {
+        let mut s: String = name.to_string();
+        if s.is_char_boundary(i) && i < s.len() { s.remove(i); out.push(format!("{s}.{tld}")); }
+    }
+    // adjacent transposition
+    let chars: Vec<char> = name.chars().collect();
+    for i in 0..chars.len().saturating_sub(1) {
+        let mut c = chars.clone();
+        c.swap(i, i + 1);
+        out.push(format!("{}.{tld}", c.into_iter().collect::<String>()));
+    }
+    // common double letters
+    for i in 0..chars.len() {
+        let mut c = chars.clone();
+        c.insert(i, chars[i]);
+        out.push(format!("{}.{tld}", c.into_iter().collect::<String>()));
+    }
+    // TLD swaps
+    for alt in ["com", "net", "org", "io", "co", "info", "app", "dev"] {
+        if alt != tld { out.push(format!("{name}.{alt}")); }
+    }
+
+    out.sort(); out.dedup();
+    out.retain(|s| *s != d);
+    o.log.push(format!("◦  {} permutation(s) generated", out.len()));
+    for s in out.into_iter().take(80) {
+        o.item(Kind::Domain, s, "typosquat");
+    }
+}
+
+// ── ASN announced prefixes via RIPEstat ────────────────────────────────────────
+async fn asn_prefixes(asn: &str, o: &mut Outcome) {
+    let num: String = asn.chars().filter(|c| c.is_ascii_digit()).collect();
+    if num.is_empty() { o.log.push("✗  not a valid ASN".into()); return; }
+    let url = format!("https://stat.ripe.net/data/announced-prefixes/data.json?resource=AS{num}");
+    o.log.push("◦  querying RIPEstat for announced prefixes…".into());
+    let resp = match client().get(&url).send().await {
+        Ok(r) => r, Err(e) => { o.log.push(format!("✗  {e}")); return; }
+    };
+    let j: serde_json::Value = serde_json::from_str(&resp.text().await.unwrap_or_default())
+        .unwrap_or_default();
+    let mut n = 0;
+    if let Some(arr) = j.pointer("/data/prefixes").and_then(|p| p.as_array()) {
+        for p in arr {
+            if let Some(pfx) = p.get("prefix").and_then(|v| v.as_str()) {
+                n += 1;
+                if n <= 120 { o.item(Kind::Netblock, pfx.to_string(), "announced"); }
+            }
+        }
+    }
+    o.log.push(format!("✓  {n} prefix(es) announced by AS{num}"));
 }
 
 // ── Phone country guess ────────────────────────────────────────────────────────

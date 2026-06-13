@@ -104,7 +104,12 @@ pub struct GraphPanel {
     filter:    String,
     menu:      Option<(u64, egui::Pos2)>,
     machine:   Option<MachineRun>,
+    canvas_rect: egui::Rect,
+    pending_shot: Option<ExportFmt>,
 }
+
+#[derive(Clone, Copy)]
+enum ExportFmt { Png, Pdf }
 
 impl GraphPanel {
     pub fn new() -> Self {
@@ -130,6 +135,8 @@ impl GraphPanel {
             filter: String::new(),
             menu: None,
             machine: None,
+            canvas_rect: egui::Rect::NOTHING,
+            pending_shot: None,
         };
         s.log("◦  add an entity from the palette, then double-click it to run a transform");
         s
@@ -406,6 +413,19 @@ impl GraphPanel {
         self.machine_tick();
         if self.machine.is_some() { ctx.request_repaint(); }
 
+        // Pick up a requested screenshot once the backend delivers it.
+        if self.pending_shot.is_some() {
+            let shot = ctx.input(|i| i.events.iter().find_map(|e| match e {
+                egui::Event::Screenshot { image, .. } => Some(image.clone()),
+                _ => None,
+            }));
+            if let Some(img) = shot {
+                if let Some(fmt) = self.pending_shot.take() {
+                    self.save_shot(img, fmt, ctx.pixels_per_point());
+                }
+            }
+        }
+
         // Global shortcuts — but never while the user is typing in a text field
         // (otherwise Backspace/Delete would nuke the selected node).
         if !ctx.wants_keyboard_input() {
@@ -460,6 +480,8 @@ impl GraphPanel {
                     if toolbtn(ui, "▼ Load").clicked() { self.load_graph(); }
                     if toolbtn(ui, "▲ Save").clicked() { self.save_graph(); }
                     if toolbtn(ui, "⇩ CSV").clicked()  { self.export_csv(); }
+                    if toolbtn(ui, "⛶ PNG").clicked()  { self.request_shot(ctx, ExportFmt::Png); }
+                    if toolbtn(ui, "⛶ PDF").clicked()  { self.request_shot(ctx, ExportFmt::Pdf); }
                     ui.add(TextEdit::singleline(&mut self.save_path)
                         .desired_width(120.0)
                         .font(FontId::new(12.0, FontFamily::Monospace))
@@ -808,9 +830,9 @@ impl GraphPanel {
         egui::CentralPanel::default()
             .frame(egui::Frame::none().fill(bg_canvas()).inner_margin(Margin::same(0.0)))
             .show(ctx, |ui| {
+                self.canvas_rect = ui.available_rect_before_wrap();
                 if self.needs_fit {
-                    let rect = ui.available_rect_before_wrap();
-                    self.view.fit(&self.graph, rect);
+                    self.view.fit(&self.graph, self.canvas_rect);
                     self.needs_fit = false;
                 }
                 let action = canvas::draw(ui, &mut self.graph, &mut self.view, &mut self.sel);
@@ -895,6 +917,41 @@ impl GraphPanel {
         if let Some(e) = self.graph.entities.get(&id) {
             self.view.pan = -e.pos.to_vec2() * self.view.zoom;
             self.sel.select_one(id);
+        }
+    }
+
+    fn request_shot(&mut self, ctx: &egui::Context, fmt: ExportFmt) {
+        self.pending_shot = Some(fmt);
+        ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot);
+        self.log("◦  capturing canvas…");
+    }
+
+    /// Crop the framebuffer screenshot to the canvas and save it.
+    fn save_shot(&mut self, img: std::sync::Arc<egui::ColorImage>, fmt: ExportFmt, ppp: f32) {
+        let [fw, fh] = img.size;
+        let r = self.canvas_rect;
+        let x0 = ((r.min.x * ppp).floor() as usize).min(fw);
+        let y0 = ((r.min.y * ppp).floor() as usize).min(fh);
+        let x1 = ((r.max.x * ppp).ceil() as usize).min(fw);
+        let y1 = ((r.max.y * ppp).ceil() as usize).min(fh);
+        let (cw, ch) = (x1.saturating_sub(x0), y1.saturating_sub(y0));
+        if cw == 0 || ch == 0 { self.log("✗  empty capture"); return; }
+
+        let mut rgba = Vec::with_capacity(cw * ch * 4);
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let px = img.pixels[y * fw + x];
+                rgba.extend_from_slice(&[px.r(), px.g(), px.b(), 255]);
+            }
+        }
+        let (cw, ch) = (cw as u32, ch as u32);
+        let res = match fmt {
+            ExportFmt::Png => super::export::save_png("graph.png", &rgba, cw, ch).map(|_| "graph.png"),
+            ExportFmt::Pdf => super::export::save_pdf("graph.pdf", &rgba, cw, ch).map(|_| "graph.pdf"),
+        };
+        match res {
+            Ok(p)  => self.log(format!("✓  exported {p} ({cw}×{ch})")),
+            Err(e) => self.log(format!("✗  export failed: {e}")),
         }
     }
 

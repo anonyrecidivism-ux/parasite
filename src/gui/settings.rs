@@ -4,7 +4,10 @@
 use eframe::egui::{self, Color32};
 use serde::{Deserialize, Serialize};
 
-use super::theme::{self, UiConfig};
+use super::theme::{self, BgStyle, NodeShape, UiConfig};
+
+fn d_shape() -> NodeShape { NodeShape::Circle }
+fn d_bg()    -> BgStyle   { BgStyle::Grid }
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Settings {
@@ -14,6 +17,12 @@ pub struct Settings {
     pub show_grid:   bool,
     pub edge_labels: bool,
     pub font_scale:  f32,
+    #[serde(default = "d_shape")]
+    pub node_shape:  NodeShape,
+    #[serde(default)]
+    pub edge_curved: bool,
+    #[serde(default = "d_bg")]
+    pub bg_style:    BgStyle,
     pub welcomed:    bool,
 }
 
@@ -26,6 +35,9 @@ impl Default for Settings {
             show_grid: true,
             edge_labels: true,
             font_scale: 1.0,
+            node_shape: NodeShape::Circle,
+            edge_curved: false,
+            bg_style: BgStyle::Grid,
             welcomed: false,
         }
     }
@@ -69,6 +81,9 @@ impl Settings {
             show_grid:   self.show_grid,
             edge_labels: self.edge_labels,
             font_scale:  self.font_scale.clamp(0.7, 1.6),
+            node_shape:  self.node_shape,
+            edge_curved: self.edge_curved,
+            bg_style:    self.bg_style,
         });
         theme::apply(ctx);
     }

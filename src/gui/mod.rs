@@ -6,6 +6,7 @@
 mod app;
 mod canvas;
 mod engine;
+mod export;
 mod install;
 mod model;
 mod settings;
@@ -138,8 +139,33 @@ impl Shell {
                     .text("node size")).changed();
                 changed |= ui.add(egui::Slider::new(&mut self.settings.font_scale, 0.8..=1.5)
                     .text("font scale")).changed();
+
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("node shape").color(text_pri()).size(12.0));
+                    egui::ComboBox::from_id_source("shape_combo")
+                        .selected_text(RichText::new(self.settings.node_shape.label()).color(text_pri()))
+                        .show_ui(ui, |ui| {
+                            for s in theme::NodeShape::ALL {
+                                if ui.selectable_value(&mut self.settings.node_shape, s,
+                                    RichText::new(s.label()).color(text_pri())).clicked() { changed = true; }
+                            }
+                        });
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("background").color(text_pri()).size(12.0));
+                    egui::ComboBox::from_id_source("bg_combo")
+                        .selected_text(RichText::new(self.settings.bg_style.label()).color(text_pri()))
+                        .show_ui(ui, |ui| {
+                            for s in theme::BgStyle::ALL {
+                                if ui.selectable_value(&mut self.settings.bg_style, s,
+                                    RichText::new(s.label()).color(text_pri())).clicked() { changed = true; }
+                            }
+                        });
+                });
+
+                changed |= ui.checkbox(&mut self.settings.edge_curved,
+                    RichText::new("curved edges").color(text_pri())).changed();
                 changed |= ui.checkbox(&mut self.settings.show_grid,
-                    RichText::new("show grid").color(text_pri())).changed();
+                    RichText::new("show background pattern").color(text_pri())).changed();
                 changed |= ui.checkbox(&mut self.settings.edge_labels,
                     RichText::new("edge labels").color(text_pri())).changed();
 

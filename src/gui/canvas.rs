@@ -97,7 +97,13 @@ pub fn draw(
     let shift = ui.input(|i| i.modifiers.shift);
 
     painter.rect_filled(rect, Rounding::ZERO, bg_canvas());
-    if show_grid() { draw_grid(&painter, rect, center, view); }
+    if show_grid() {
+        match bg_style() {
+            BgStyle::Grid  => draw_grid(&painter, rect, center, view),
+            BgStyle::Dots  => draw_dots(&painter, rect, center, view),
+            BgStyle::Plain => {}
+        }
+    }
 
     // ── Zoom around the cursor ────────────────────────────────────────────────
     if response.hovered() {
@@ -191,20 +197,39 @@ pub fn draw(
     }
 
     // ── Draw edges ─────────────────────────────────────────────────────────────
+    let curved = edge_curved();
     for edge in &graph.edges {
         let (Some(a), Some(b)) = (graph.entities.get(&edge.from), graph.entities.get(&edge.to)) else { continue };
         let pa = view.w2s(center, a.pos);
         let pb = view.w2s(center, b.pos);
-        painter.line_segment([pa, pb], Stroke::new(1.3, border()));
-        // arrow head
-        let dir = (pb - pa).normalized();
+        let estroke = Stroke::new(1.3, border());
+
+        let (mid, dir) = if curved {
+            // quadratic curve: control point offset perpendicular to the chord
+            let chord = pb - pa;
+            let perp = Vec2::new(-chord.y, chord.x).normalized();
+            let ctrl = pa + chord * 0.5 + perp * (chord.length() * 0.16);
+            let mut pts = Vec::with_capacity(13);
+            for i in 0..=12 {
+                let t = i as f32 / 12.0;
+                let u = 1.0 - t;
+                pts.push((pa.to_vec2() * (u * u) + ctrl.to_vec2() * (2.0 * u * t) + pb.to_vec2() * (t * t)).to_pos2());
+            }
+            painter.add(egui::Shape::line(pts.clone(), estroke));
+            let tip_dir = (pb - pts[11]).normalized();
+            (ctrl, tip_dir)
+        } else {
+            painter.line_segment([pa, pb], estroke);
+            (pa + (pb - pa) * 0.5, (pb - pa).normalized())
+        };
+
+        // arrow head near b
         let tip = pb - dir * (node_radius() * view.zoom + 2.0);
         let perp = Vec2::new(-dir.y, dir.x);
         let s = 6.0 * view.zoom.clamp(0.6, 1.4);
-        painter.line_segment([tip, tip - dir * s + perp * s * 0.6], Stroke::new(1.3, border()));
-        painter.line_segment([tip, tip - dir * s - perp * s * 0.6], Stroke::new(1.3, border()));
+        painter.line_segment([tip, tip - dir * s + perp * s * 0.6], estroke);
+        painter.line_segment([tip, tip - dir * s - perp * s * 0.6], estroke);
         if edge_labels() && view.zoom > 0.7 && !edge.label.is_empty() {
-            let mid = pa + (pb - pa) * 0.5;
             painter.text(mid, egui::Align2::CENTER_CENTER, &edge.label,
                 FontId::new(9.5, FontFamily::Proportional), text_mut());
         }
@@ -228,15 +253,16 @@ pub fn draw(
         let is_hov = hit == Some(id);
         let col = e.kind.color();
 
+        let shape = node_shape();
         if is_sel {
-            painter.circle_filled(p, r + 5.0, Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), 40));
-            painter.circle_stroke(p, r + 4.0, Stroke::new(if is_primary { 2.5 } else { 1.5 }, accent()));
+            fill_shape(&painter, p, r + 5.0, shape, Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), 40));
+            stroke_shape(&painter, p, r + 4.0, shape, Stroke::new(if is_primary { 2.5 } else { 1.5 }, accent()));
         } else if is_hov {
-            painter.circle_stroke(p, r + 3.0, Stroke::new(1.5, accent_dark()));
+            stroke_shape(&painter, p, r + 3.0, shape, Stroke::new(1.5, accent_dark()));
         }
-        painter.circle_filled(p, r, bg_panel());
-        painter.circle_stroke(p, r, Stroke::new(2.0, col));
-        painter.circle_filled(p, r * 0.62, Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), 55));
+        fill_shape(&painter, p, r, shape, bg_panel());
+        stroke_shape(&painter, p, r, shape, Stroke::new(2.0, col));
+        fill_shape(&painter, p, r * 0.62, shape, Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), 55));
         painter.text(p, egui::Align2::CENTER_CENTER, e.kind.icon(), icon_font.clone(), col);
 
         if view.zoom > 0.45 {
@@ -280,6 +306,59 @@ fn node_at(graph: &Graph, view: &View, center: Pos2, p: Pos2) -> Option<u64> {
         }
     }
     best.map(|(id, _)| id)
+}
+
+fn shape_pts(c: Pos2, r: f32, shape: NodeShape) -> Vec<Pos2> {
+    match shape {
+        NodeShape::Square => {
+            let k = r * 0.9;
+            vec![egui::pos2(c.x - k, c.y - k), egui::pos2(c.x + k, c.y - k),
+                 egui::pos2(c.x + k, c.y + k), egui::pos2(c.x - k, c.y + k)]
+        }
+        NodeShape::Diamond => vec![
+            egui::pos2(c.x, c.y - r), egui::pos2(c.x + r, c.y),
+            egui::pos2(c.x, c.y + r), egui::pos2(c.x - r, c.y)],
+        NodeShape::Hexagon => (0..6).map(|i| {
+            let a = std::f32::consts::PI / 3.0 * i as f32 - std::f32::consts::FRAC_PI_2;
+            egui::pos2(c.x + r * a.cos(), c.y + r * a.sin())
+        }).collect(),
+        NodeShape::Circle => Vec::new(),
+    }
+}
+
+fn fill_shape(painter: &egui::Painter, c: Pos2, r: f32, shape: NodeShape, fill: Color32) {
+    if shape == NodeShape::Circle {
+        painter.circle_filled(c, r, fill);
+    } else {
+        painter.add(egui::Shape::convex_polygon(shape_pts(c, r, shape), fill, Stroke::NONE));
+    }
+}
+
+fn stroke_shape(painter: &egui::Painter, c: Pos2, r: f32, shape: NodeShape, stroke: Stroke) {
+    if shape == NodeShape::Circle {
+        painter.circle_stroke(c, r, stroke);
+    } else {
+        let mut pts = shape_pts(c, r, shape);
+        if let Some(&first) = pts.first() { pts.push(first); }
+        painter.add(egui::Shape::line(pts, stroke));
+    }
+}
+
+fn draw_dots(painter: &egui::Painter, rect: Rect, center: Pos2, view: &View) {
+    let step = 48.0 * view.zoom;
+    if step < 10.0 { return; }
+    let origin = center + view.pan;
+    let mut x = origin.x % step;
+    while x < rect.right() {
+        let mut y = origin.y % step;
+        while y < rect.bottom() {
+            if x >= rect.left() && y >= rect.top() {
+                painter.circle_filled(Pos2::new(x, y), 1.2, grid());
+            }
+            y += step;
+        }
+        x += step;
+    }
 }
 
 fn draw_grid(painter: &egui::Painter, rect: Rect, center: Pos2, view: &View) {
