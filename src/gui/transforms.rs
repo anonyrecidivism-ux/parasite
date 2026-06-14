@@ -165,6 +165,39 @@ pub const TRANSFORMS: &[TransformDef] = &[
                    desc: "strip to E.164-ish digits and validate length" },
     TransformDef { id: "phone_pivots", name: "Search Links",       applies: Kind::Phone,
                    desc: "Truecaller, sync.me, WhoCalld, Google (open in browser)" },
+    // ── BTC address ───────────────────────────────────────────────────────────
+    TransformDef { id: "btc_info",     name: "Balance & Activity", applies: Kind::BtcAddress,
+                   desc: "balance, tx count & total received (blockchain.info)" },
+    TransformDef { id: "btc_pivots",   name: "Explorer Links",     applies: Kind::BtcAddress,
+                   desc: "Blockchair, Blockchain.com, OXT (open in browser)" },
+    // ── MAC address ───────────────────────────────────────────────────────────
+    TransformDef { id: "mac_vendor",   name: "Vendor Lookup",      applies: Kind::MacAddress,
+                   desc: "OUI → hardware vendor (macvendors.com)" },
+    // ── Coordinate / Location ─────────────────────────────────────────────────
+    TransformDef { id: "coord_geocode",name: "Reverse Geocode",    applies: Kind::Coordinate,
+                   desc: "lat,lon → address (OpenStreetMap Nominatim)" },
+    TransformDef { id: "coord_pivots", name: "Map Links",          applies: Kind::Coordinate,
+                   desc: "OpenStreetMap, Google Maps, Bing (open in browser)" },
+    TransformDef { id: "loc_geocode",  name: "Geocode",            applies: Kind::Location,
+                   desc: "place name → coordinates (Nominatim)" },
+    TransformDef { id: "loc_pivots",   name: "Map Links",          applies: Kind::Location,
+                   desc: "maps & search for this place (open in browser)" },
+    // ── Document / OS / Service / Netblock / Port / Phrase ────────────────────
+    TransformDef { id: "doc_pivots",   name: "Find Online",        applies: Kind::Document,
+                   desc: "Google filetype search for this document" },
+    TransformDef { id: "os_pivots",    name: "Known Vulns",        applies: Kind::OperatingSystem,
+                   desc: "CVE / Exploit-DB / Vulners search links" },
+    TransformDef { id: "service_pivots",name: "Known Vulns",       applies: Kind::Service,
+                   desc: "CVE / Exploit-DB / Shodan search links" },
+    TransformDef { id: "netblock_pivots",name: "Recon Links",      applies: Kind::Netblock,
+                   desc: "Shodan, Censys, bgp.he.net (open in browser)" },
+    TransformDef { id: "port_pivots",  name: "Service Info",       applies: Kind::Port,
+                   desc: "Shodan & SpeedGuide for this port (open in browser)" },
+    TransformDef { id: "phrase_search",name: "Search Engines",     applies: Kind::Phrase,
+                   desc: "Google / Bing / DuckDuckGo (open in browser)" },
+    // ── File ──────────────────────────────────────────────────────────────────
+    TransformDef { id: "file_hash",    name: "Compute Hashes",     applies: Kind::File,
+                   desc: "MD5 / SHA1 / SHA256 of a local file" },
     // ── CVE ───────────────────────────────────────────────────────────────────
     TransformDef { id: "cve_nvd",      name: "NVD Details",        applies: Kind::Cve,
                    desc: "description, CVSS score & severity from NVD" },
@@ -363,6 +396,21 @@ pub async fn run(id: &str, value: &str) -> Outcome {
         "org_domain" => org_domain(&v, &mut o),
         "org_dork"   => org_dork(&v, &mut o),
         "org_pivots" => pivots(&v, "org", &mut o),
+        // ── per-kind transforms ──
+        "btc_info"      => btc_info(&v, &mut o).await,
+        "btc_pivots"    => pivots(&v, "btc", &mut o),
+        "mac_vendor"    => mac_vendor(&v, &mut o).await,
+        "coord_geocode" => coord_geocode(&v, &mut o).await,
+        "coord_pivots"  => pivots(&v, "coord", &mut o),
+        "loc_geocode"   => loc_geocode(&v, &mut o).await,
+        "loc_pivots"    => pivots(&v, "location", &mut o),
+        "doc_pivots"    => pivots(&v, "document", &mut o),
+        "os_pivots"     => pivots(&v, "os", &mut o),
+        "service_pivots"=> pivots(&v, "service", &mut o),
+        "netblock_pivots"=> pivots(&v, "netblock", &mut o),
+        "port_pivots"   => pivots(&v, "port", &mut o),
+        "phrase_search" => pivots(&v, "phrase", &mut o),
+        "file_hash"     => file_hash(&v, &mut o),
         "hash_lookup" => hash_lookup(&v, &mut o),
         // ── awesome-osint style search/pivot links ──
         "dom_pivots"    => pivots(&v, "domain", &mut o),
@@ -1080,6 +1128,50 @@ fn pivots(value: &str, kind: &str, o: &mut Outcome) {
             ("Sync.me",     format!("https://sync.me/search/?number={e}")),
             ("WhoCalld",    format!("https://whocalld.com/{e}")),
         ],
+        "btc" => vec![
+            ("Blockchair",     format!("https://blockchair.com/bitcoin/address/{e}")),
+            ("Blockchain.com", format!("https://www.blockchain.com/explorer/addresses/btc/{e}")),
+            ("OXT",            format!("https://oxt.me/address/{e}")),
+            ("BitcoinAbuse",   format!("https://www.bitcoinabuse.com/reports/{e}")),
+        ],
+        "coord" => vec![
+            ("OpenStreetMap", format!("https://www.openstreetmap.org/?mlat={}&mlon={}", lat(value), lon(value))),
+            ("Google Maps",   format!("https://www.google.com/maps?q={e}")),
+            ("Bing Maps",     format!("https://www.bing.com/maps?cp={e}")),
+        ],
+        "location" => vec![
+            ("Google Maps", format!("https://www.google.com/maps/search/{e}")),
+            ("OpenStreetMap", format!("https://www.openstreetmap.org/search?query={e}")),
+            ("Wikipedia",   format!("https://en.wikipedia.org/w/index.php?search={e}")),
+        ],
+        "document" => vec![
+            ("Google",  format!("https://www.google.com/search?q={e}")),
+            ("Google (filetype)", format!("https://www.google.com/search?q=%22{e}%22+filetype:pdf")),
+        ],
+        "os" => vec![
+            ("CVE search",   format!("https://www.cvedetails.com/version-search.php?search={e}")),
+            ("Exploit-DB",   format!("https://www.exploit-db.com/search?text={e}")),
+            ("Vulners",      format!("https://vulners.com/search?query={e}")),
+        ],
+        "service" => vec![
+            ("CVE search",  format!("https://www.cvedetails.com/google-search-results.php?q={e}")),
+            ("Exploit-DB",  format!("https://www.exploit-db.com/search?text={e}")),
+            ("Shodan",      format!("https://www.shodan.io/search?query=product:{e}")),
+        ],
+        "netblock" => vec![
+            ("Shodan",   format!("https://www.shodan.io/search?query=net:{e}")),
+            ("Censys",   format!("https://search.censys.io/search?resource=hosts&q=ip:{e}")),
+            ("bgp.he.net", format!("https://bgp.he.net/net/{e}")),
+        ],
+        "port" => vec![
+            ("Shodan",      format!("https://www.shodan.io/search?query=port:{e}")),
+            ("SpeedGuide",  format!("https://www.speedguide.net/port.php?port={e}")),
+        ],
+        "phrase" => vec![
+            ("Google",     format!("https://www.google.com/search?q={e}")),
+            ("Bing",       format!("https://www.bing.com/search?q={e}")),
+            ("DuckDuckGo", format!("https://duckduckgo.com/?q={e}")),
+        ],
         _ => vec![],
     };
     for (name, url) in links {
@@ -1129,6 +1221,101 @@ fn phone_format(phone: &str, o: &mut Outcome) {
     o.props.push(("normalized".into(), digits.clone()));
     o.props.push(("valid_length".into(), valid.to_string()));
     if valid { o.item(Kind::Phrase, digits, "E.164"); }
+}
+
+fn lat(v: &str) -> String { v.split(',').next().unwrap_or("").trim().to_string() }
+fn lon(v: &str) -> String { v.split(',').nth(1).unwrap_or("").trim().to_string() }
+
+// ── BTC address (blockchain.info, free) ────────────────────────────────────────
+async fn btc_info(addr: &str, o: &mut Outcome) {
+    let url = format!("https://blockchain.info/rawaddr/{}?limit=0", enc(addr.trim()));
+    let resp = match client().get(&url).send().await {
+        Ok(r) => r, Err(e) => { o.log.push(format!("✗  {e}")); return; }
+    };
+    if !resp.status().is_success() { o.log.push(format!("✗  blockchain.info: HTTP {}", resp.status().as_u16())); return; }
+    let j: serde_json::Value = serde_json::from_str(&resp.text().await.unwrap_or_default()).unwrap_or_default();
+    let sat = |k: &str| j.get(k).and_then(|v| v.as_f64()).unwrap_or(0.0) / 1e8;
+    let n_tx = j.get("n_tx").and_then(|v| v.as_u64()).unwrap_or(0);
+    o.log.push(format!("✓  balance {:.8} BTC · {} tx · received {:.8}", sat("final_balance"), n_tx, sat("total_received")));
+    o.props.push(("balance_btc".into(), format!("{:.8}", sat("final_balance"))));
+    o.props.push(("tx_count".into(), n_tx.to_string()));
+    o.props.push(("total_received_btc".into(), format!("{:.8}", sat("total_received"))));
+    o.item(Kind::Phrase, format!("{:.8} BTC ({n_tx} tx)", sat("final_balance")), "balance");
+}
+
+// ── MAC vendor (macvendors.com, free) ──────────────────────────────────────────
+async fn mac_vendor(mac: &str, o: &mut Outcome) {
+    let url = format!("https://api.macvendors.com/{}", enc(mac.trim()));
+    match client().get(&url).send().await {
+        Ok(r) if r.status().is_success() => {
+            let v = r.text().await.unwrap_or_default();
+            if v.trim().is_empty() { o.log.push("◦  vendor not found".into()); return; }
+            o.log.push(format!("✓  vendor: {v}"));
+            o.props.push(("vendor".into(), v.clone()));
+            o.item(Kind::Organization, v, "vendor");
+        }
+        Ok(r) => o.log.push(format!("◦  macvendors: HTTP {} (unknown OUI?)", r.status().as_u16())),
+        Err(e) => o.log.push(format!("✗  {e}")),
+    }
+}
+
+// ── Geocoding via OpenStreetMap Nominatim (free) ───────────────────────────────
+async fn coord_geocode(coord: &str, o: &mut Outcome) {
+    let url = format!("https://nominatim.openstreetmap.org/reverse?format=json&lat={}&lon={}",
+        enc(&lat(coord)), enc(&lon(coord)));
+    let resp = match client().get(&url).send().await {
+        Ok(r) => r, Err(e) => { o.log.push(format!("✗  {e}")); return; }
+    };
+    let j: serde_json::Value = serde_json::from_str(&resp.text().await.unwrap_or_default()).unwrap_or_default();
+    if let Some(name) = j.get("display_name").and_then(|v| v.as_str()) {
+        o.log.push(format!("✓  {name}"));
+        o.props.push(("address".into(), name.into()));
+        o.item(Kind::Location, name.to_string(), "located at");
+    } else {
+        o.log.push("◦  no address for these coordinates".into());
+    }
+}
+
+async fn loc_geocode(place: &str, o: &mut Outcome) {
+    let url = format!("https://nominatim.openstreetmap.org/search?format=json&limit=1&q={}", enc(place.trim()));
+    let resp = match client().get(&url).send().await {
+        Ok(r) => r, Err(e) => { o.log.push(format!("✗  {e}")); return; }
+    };
+    let arr: Vec<serde_json::Value> = serde_json::from_str(&resp.text().await.unwrap_or_default()).unwrap_or_default();
+    if let Some(first) = arr.first() {
+        let la = first.get("lat").and_then(|v| v.as_str()).unwrap_or("");
+        let lo = first.get("lon").and_then(|v| v.as_str()).unwrap_or("");
+        if let Some(name) = first.get("display_name").and_then(|v| v.as_str()) {
+            o.log.push(format!("✓  {name} → {la},{lo}"));
+            o.props.push(("matched".into(), name.into()));
+        }
+        if !la.is_empty() { o.item(Kind::Coordinate, format!("{la}, {lo}"), "coordinates"); }
+    } else {
+        o.log.push("◦  place not found".into());
+    }
+}
+
+// ── Local file hashing ─────────────────────────────────────────────────────────
+fn file_hash(path: &str, o: &mut Outcome) {
+    use sha2::{Digest as _, Sha256};
+    let bytes = match std::fs::read(path.trim()) {
+        Ok(b) => b, Err(e) => { o.log.push(format!("✗  cannot read file: {e}")); return; }
+    };
+    o.log.push(format!("◦  {} bytes", bytes.len()));
+    let md5 = {
+        use md5::{Digest as _, Md5};
+        let mut h = Md5::new(); h.update(&bytes); hex(&h.finalize())
+    };
+    let sha1 = {
+        use sha1::{Digest as _, Sha1};
+        let mut h = Sha1::new(); h.update(&bytes); hex(&h.finalize())
+    };
+    let sha256 = { let mut h = Sha256::new(); h.update(&bytes); hex(&h.finalize()) };
+    for (name, val) in [("md5", &md5), ("sha1", &sha1), ("sha256", &sha256)] {
+        o.log.push(format!("✓  {name}: {val}"));
+        o.props.push((name.into(), val.clone()));
+        o.item(Kind::Hash, val.clone(), name);
+    }
 }
 
 // ── GitHub user (free) ─────────────────────────────────────────────────────────

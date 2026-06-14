@@ -240,8 +240,14 @@ pub fn draw(
 
     // ── Draw nodes ─────────────────────────────────────────────────────────────
     let r = node_radius() * view.zoom;
-    let label_font = FontId::new((12.0 * view.zoom).clamp(9.0, 15.0), FontFamily::Proportional);
+    let label_font = FontId::new((label_size() * view.zoom).clamp(8.0, 22.0), FontFamily::Proportional);
     let icon_font  = FontId::new((18.0 * view.zoom).clamp(11.0, 24.0), FontFamily::Proportional);
+    let icons_on   = show_icons();
+
+    // optional cluster colouring (by connected component)
+    let comp: std::collections::HashMap<u64, usize> = if color_clusters() {
+        components(graph)
+    } else { std::collections::HashMap::new() };
 
     // stable draw order
     let mut ids: Vec<u64> = graph.entities.keys().copied().collect();
@@ -254,7 +260,7 @@ pub fn draw(
         let is_sel = sel.contains(id);
         let is_primary = sel.primary == Some(id);
         let is_hov = hit == Some(id);
-        let col = e.kind.color();
+        let col = if let Some(&c) = comp.get(&id) { cluster_color(c) } else { e.kind.color() };
 
         let shape = match node_shape() {
             NodeShape::ByType => shape_for_kind(e.kind),
@@ -269,7 +275,9 @@ pub fn draw(
         fill_shape(&painter, p, r, shape, bg_panel());
         stroke_shape(&painter, p, r, shape, Stroke::new(2.0, col));
         fill_shape(&painter, p, r * 0.62, shape, Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), 55));
-        painter.text(p, egui::Align2::CENTER_CENTER, e.kind.icon(), icon_font.clone(), col);
+        if icons_on {
+            painter.text(p, egui::Align2::CENTER_CENTER, e.kind.icon(), icon_font.clone(), col);
+        }
 
         if node_labels() && view.zoom > 0.45 {
             let label: String = {
@@ -346,6 +354,76 @@ pub fn grid_layout(graph: &mut Graph) {
             e.pinned = false;
         }
     }
+}
+
+/// Assign a connected-component index to every node (BFS over undirected edges).
+pub fn components(graph: &Graph) -> std::collections::HashMap<u64, usize> {
+    let adj = undirected_adj(graph);
+    let mut comp = std::collections::HashMap::new();
+    let mut next = 0usize;
+    let mut ids: Vec<u64> = adj.keys().copied().collect();
+    ids.sort_unstable();
+    for start in ids {
+        if comp.contains_key(&start) { continue; }
+        let mut q = std::collections::VecDeque::from([start]);
+        comp.insert(start, next);
+        while let Some(x) = q.pop_front() {
+            for &y in &adj[&x] {
+                if !comp.contains_key(&y) { comp.insert(y, next); q.push_back(y); }
+            }
+        }
+        next += 1;
+    }
+    comp
+}
+
+/// A distinct colour per cluster index.
+pub fn cluster_color(i: usize) -> Color32 {
+    const PAL: [Color32; 10] = [
+        Color32::from_rgb(217,119,87), Color32::from_rgb(96,165,250), Color32::from_rgb(74,222,128),
+        Color32::from_rgb(189,147,249), Color32::from_rgb(235,180,90), Color32::from_rgb(120,210,230),
+        Color32::from_rgb(244,114,150), Color32::from_rgb(163,190,140), Color32::from_rgb(255,140,90),
+        Color32::from_rgb(150,160,210),
+    ];
+    PAL[i % PAL.len()]
+}
+
+/// Betweenness centrality (Brandes' algorithm) for an undirected graph.
+pub fn betweenness(graph: &Graph) -> std::collections::HashMap<u64, f64> {
+    use std::collections::{HashMap, VecDeque};
+    let adj = undirected_adj(graph);
+    let nodes: Vec<u64> = adj.keys().copied().collect();
+    let mut bc: HashMap<u64, f64> = nodes.iter().map(|&n| (n, 0.0)).collect();
+
+    for &s in &nodes {
+        let mut stack: Vec<u64> = Vec::new();
+        let mut pred: HashMap<u64, Vec<u64>> = nodes.iter().map(|&n| (n, Vec::new())).collect();
+        let mut sigma: HashMap<u64, f64> = nodes.iter().map(|&n| (n, 0.0)).collect();
+        let mut dist: HashMap<u64, i64> = nodes.iter().map(|&n| (n, -1)).collect();
+        sigma.insert(s, 1.0);
+        dist.insert(s, 0);
+        let mut q = VecDeque::from([s]);
+        while let Some(v) = q.pop_front() {
+            stack.push(v);
+            for &w in &adj[&v] {
+                if dist[&w] < 0 { dist.insert(w, dist[&v] + 1); q.push_back(w); }
+                if dist[&w] == dist[&v] + 1 {
+                    *sigma.get_mut(&w).unwrap() += sigma[&v];
+                    pred.get_mut(&w).unwrap().push(v);
+                }
+            }
+        }
+        let mut delta: HashMap<u64, f64> = nodes.iter().map(|&n| (n, 0.0)).collect();
+        while let Some(w) = stack.pop() {
+            for &v in &pred[&w] {
+                let c = (sigma[&v] / sigma[&w]) * (1.0 + delta[&w]);
+                *delta.get_mut(&v).unwrap() += c;
+            }
+            if w != s { *bc.get_mut(&w).unwrap() += delta[&w]; }
+        }
+    }
+    for v in bc.values_mut() { *v /= 2.0; }
+    bc
 }
 
 fn undirected_adj(graph: &Graph) -> std::collections::HashMap<u64, Vec<u64>> {

@@ -84,6 +84,9 @@ pub struct UiConfig {
     pub edge_curved: bool,
     pub edge_width:  f32,
     pub node_labels: bool,
+    pub label_size:  f32,
+    pub show_icons:  bool,
+    pub color_clusters: bool,
     pub bg_style:    BgStyle,
     pub variant:     UiVariant,
 }
@@ -93,7 +96,8 @@ impl Default for UiConfig {
         Self {
             node_radius: 22.0, show_grid: true, edge_labels: true, font_scale: 1.0,
             node_shape: NodeShape::Circle, edge_curved: false, edge_width: 1.3,
-            node_labels: true, bg_style: BgStyle::Grid, variant: UiVariant::Standard,
+            node_labels: true, label_size: 12.0, show_icons: true, color_clusters: false,
+            bg_style: BgStyle::Grid, variant: UiVariant::Standard,
         }
     }
 }
@@ -316,6 +320,9 @@ pub fn node_shape()  -> NodeShape { config().node_shape }
 pub fn edge_curved() -> bool      { config().edge_curved }
 pub fn edge_width()  -> f32       { config().edge_width }
 pub fn node_labels() -> bool      { config().node_labels }
+pub fn label_size()  -> f32       { config().label_size }
+pub fn show_icons()  -> bool      { config().show_icons }
+pub fn color_clusters() -> bool   { config().color_clusters }
 pub fn bg_style()    -> BgStyle   { config().bg_style }
 pub fn variant()     -> UiVariant { config().variant }
 

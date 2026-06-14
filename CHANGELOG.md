@@ -14,9 +14,17 @@ them into **Beta 2**.
 The "make it a real Maltego competitor" release.
 
 ### Added
-- **Graph analytics** panel — degree centrality (most-connected nodes),
-  connected components/clusters, density, average degree, isolates (with
-  one-click select), and a by-type breakdown.
+- **Maltego `.mtgx` import** — open Maltego graphs (ZIP/GraphML); entity types
+  are mapped onto parasite kinds.
+- **Transforms for every entity type** — BTC (balance via blockchain.info), MAC
+  vendor lookup, Coordinate/Location geocoding (OpenStreetMap), File hashing, and
+  search/pivot links for Document/OS/Service/Netblock/Port/Phrase. 74 in-process
+  transforms total.
+- **Graph analytics** panel — degree **and betweenness** centrality, connected
+  components/clusters, density, average degree, isolates (with one-click select),
+  and a by-type breakdown.
+- **Cluster colouring** — tint nodes by connected component.
+- More customization — label size, node-icon toggle, cluster colouring toggle.
 - **Auto-update** — launching a newer build refreshes the installed copy in
   `~/.local/share/parasite/` automatically.
 - **Interface variants** — 3 layouts selectable in Settings: Standard, Compact,

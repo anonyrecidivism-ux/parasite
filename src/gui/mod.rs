@@ -11,6 +11,7 @@ mod install;
 mod keys;
 mod logo;
 mod model;
+mod mtgx;
 mod settings;
 mod sherlock;
 mod theme;
@@ -179,10 +180,16 @@ impl Shell {
 
                 changed |= ui.add(egui::Slider::new(&mut self.settings.edge_width, 0.5..=4.0)
                     .text("edge thickness")).changed();
+                changed |= ui.add(egui::Slider::new(&mut self.settings.label_size, 8.0..=18.0)
+                    .text("label size")).changed();
                 changed |= ui.checkbox(&mut self.settings.edge_curved,
                     RichText::new("curved edges").color(text_pri())).changed();
                 changed |= ui.checkbox(&mut self.settings.node_labels,
                     RichText::new("node labels").color(text_pri())).changed();
+                changed |= ui.checkbox(&mut self.settings.show_icons,
+                    RichText::new("node icons").color(text_pri())).changed();
+                changed |= ui.checkbox(&mut self.settings.color_clusters,
+                    RichText::new("colour nodes by cluster").color(text_pri())).changed();
                 changed |= ui.checkbox(&mut self.settings.show_grid,
                     RichText::new("show background pattern").color(text_pri())).changed();
                 changed |= ui.checkbox(&mut self.settings.edge_labels,

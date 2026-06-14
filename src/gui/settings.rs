@@ -31,12 +31,19 @@ pub struct Settings {
     pub edge_width:  f32,
     #[serde(default = "d_true")]
     pub node_labels: bool,
+    #[serde(default = "d_ls")]
+    pub label_size:  f32,
+    #[serde(default = "d_true")]
+    pub show_icons:  bool,
+    #[serde(default)]
+    pub color_clusters: bool,
     #[serde(default)]
     pub api:         ApiKeys,
     pub welcomed:    bool,
 }
 
 fn d_ew()   -> f32  { 1.3 }
+fn d_ls()   -> f32  { 12.0 }
 fn d_true() -> bool { true }
 
 impl Default for Settings {
@@ -54,6 +61,9 @@ impl Default for Settings {
             variant: UiVariant::Standard,
             edge_width: 1.3,
             node_labels: true,
+            label_size: 12.0,
+            show_icons: true,
+            color_clusters: false,
             api: ApiKeys::default(),
             welcomed: false,
         }
@@ -102,6 +112,9 @@ impl Settings {
             edge_curved: self.edge_curved,
             edge_width:  self.edge_width.clamp(0.5, 5.0),
             node_labels: self.node_labels,
+            label_size:  self.label_size.clamp(8.0, 20.0),
+            show_icons:  self.show_icons,
+            color_clusters: self.color_clusters,
             bg_style:    self.bg_style,
             variant:     self.variant,
         });

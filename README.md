@@ -29,8 +29,9 @@ One unified, Maltego-style window:
   graph automatically (e.g. *Domain Footprint*, *Username Recon*, *Email →
   Identity*).
 - **Searchable entity list** in the sidebar — click to jump to a node.
-- **Save / load** graphs as JSON, **export** to CSV, **PNG** and **PDF**.
-- **17 entity types** incl. Organization, Location, ASN and CVE.
+- **Save / load** graphs as JSON, **import Maltego `.mtgx`**, **export** to CSV,
+  **PNG** and **PDF**.
+- **23 entity types** — every type has at least one transform.
 
 Both the in-process transforms **and** the 28 recon **operations** (the old
 `parasite` engine: crawling, host analysis, fuzzing, wordlists…) live in the
@@ -55,9 +56,9 @@ A first-run **welcome screen** walks you through the basics. Open **⚙ Settings
 
 Panels are **resizable** (drag their edges). Plus **5 layout algorithms**
 (force-directed / circle / grid / tree / radial), a **table view**, a
-**graph-analytics** panel (degree centrality, connected components, density,
-isolates) and **PNG/PDF/CSV** export. Everything persists to
-`~/.config/parasite/settings.json`.
+**graph-analytics** panel (degree & **betweenness** centrality, connected
+components, density, isolates), **cluster colouring**, and **PNG/PDF/CSV** export.
+Everything persists to `~/.config/parasite/settings.json`.
 
 The installed menu copy **auto-updates**: launch a freshly-built version and it
 refreshes the binary in `~/.local/share/parasite/` automatically.

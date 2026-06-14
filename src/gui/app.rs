@@ -425,6 +425,20 @@ impl GraphPanel {
 
     fn load_graph(&mut self) {
         let path = self.save_path.trim().to_string();
+        // Maltego import
+        if path.to_lowercase().ends_with(".mtgx") {
+            match super::mtgx::import(&path) {
+                Ok(g) => {
+                    self.graph = g;
+                    self.sel.clear();
+                    self.needs_fit = true;
+                    canvas::auto_layout(&mut self.graph);
+                    self.log(format!("✓  imported {} entities from Maltego ← {path}", self.graph.entities.len()));
+                }
+                Err(e) => self.log(format!("✗  .mtgx import failed: {e}")),
+            }
+            return;
+        }
         match std::fs::read_to_string(&path) {
             Ok(s) => match serde_json::from_str(&s) {
                 Ok(data) => {
@@ -575,6 +589,30 @@ impl GraphPanel {
                 }
 
                 ui.add_space(8.0); ui.separator();
+                ui.label(RichText::new("BRIDGES (betweenness centrality)").color(text_mut()).size(10.0).strong());
+                ui.add_space(2.0);
+                if n <= 400 {
+                    let bc = canvas::betweenness(&self.graph);
+                    let mut bt: Vec<(u64, f64)> = bc.into_iter().filter(|(_, v)| *v > 0.0).collect();
+                    bt.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                    bt.truncate(6);
+                    if bt.is_empty() {
+                        ui.label(RichText::new("— (no bridging nodes)").color(text_mut()).size(11.0));
+                    }
+                    for (id, score) in &bt {
+                        if let Some(ent) = self.graph.entities.get(id) {
+                            let r = ui.add(egui::Label::new(RichText::new(format!("{}  {}  ·  {:.1}",
+                                ent.kind.icon(), truncate(&ent.value, 24), score)).color(text_pri()).size(11.5))
+                                .sense(egui::Sense::click()));
+                            if r.clicked() { focus = Some(*id); }
+                            if r.hovered() { ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand); }
+                        }
+                    }
+                } else {
+                    ui.label(RichText::new("(skipped — graph too large)").color(text_mut()).size(11.0));
+                }
+
+                ui.add_space(8.0); ui.separator();
                 ui.label(RichText::new("BY TYPE").color(text_mut()).size(10.0).strong());
                 ui.add_space(2.0);
                 for (k, c) in &by_kind { row(ui, k, c.to_string()); }
@@ -718,7 +756,7 @@ impl GraphPanel {
                     ui.separator();
                     ui.add_space(8.0);
 
-                    if toolbtn(ui, "▼ Load").clicked() { self.load_graph(); }
+                    if toolbtn(ui, "▼ Load/Import").clicked() { self.load_graph(); }
                     if toolbtn(ui, "▲ Save").clicked() { self.save_graph(); }
                     if toolbtn(ui, "⇩ CSV").clicked()  { self.export_csv(); }
                     if toolbtn(ui, "⛶ PNG").clicked()  { self.request_shot(ctx, ExportFmt::Png); }
@@ -1158,10 +1196,16 @@ impl GraphPanel {
                     });
             });
 
-        // Dismiss when clicking outside the menu.
-        if ctx.input(|i| i.pointer.any_pressed()) && !area.response.hovered() {
-            close = true;
-        }
+        // Dismiss only when a press lands geometrically OUTSIDE the menu rect.
+        // (Using `hovered()` here was the bug: it's false while the pointer is
+        // over a button, so pressing Run-all/Delete closed the menu on press,
+        // before the button's click could complete.)
+        let menu_rect = area.response.rect;
+        let pressed_outside = ctx.input(|i| {
+            i.pointer.any_pressed()
+                && i.pointer.interact_pos().map_or(true, |p| !menu_rect.contains(p))
+        });
+        if pressed_outside { close = true; }
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) { close = true; }
 
         if let Some(tid) = to_run { self.dispatch(id, &tid); }
