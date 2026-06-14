@@ -27,6 +27,19 @@ impl NodeShape {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NodeStyle { Flat, Material, Neon, Outline }
+
+impl NodeStyle {
+    pub const ALL: [NodeStyle; 4] = [NodeStyle::Flat, NodeStyle::Material, NodeStyle::Neon, NodeStyle::Outline];
+    pub fn label(self) -> &'static str {
+        match self {
+            NodeStyle::Flat=>"Flat",
+            NodeStyle::Material=>"Material You", NodeStyle::Neon=>"Neon glow", NodeStyle::Outline=>"Outline",
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum UiVariant { Standard, Compact, Focus }
 
 impl UiVariant {
@@ -87,6 +100,8 @@ pub struct UiConfig {
     pub label_size:  f32,
     pub show_icons:  bool,
     pub color_clusters: bool,
+    pub node_style:  NodeStyle,
+    pub map_sensitivity: f32,
     pub bg_style:    BgStyle,
     pub variant:     UiVariant,
 }
@@ -97,6 +112,7 @@ impl Default for UiConfig {
             node_radius: 22.0, show_grid: true, edge_labels: true, font_scale: 1.0,
             node_shape: NodeShape::Circle, edge_curved: false, edge_width: 1.3,
             node_labels: true, label_size: 12.0, show_icons: true, color_clusters: false,
+            node_style: NodeStyle::Flat, map_sensitivity: 0.6,
             bg_style: BgStyle::Grid, variant: UiVariant::Standard,
         }
     }
@@ -323,6 +339,8 @@ pub fn node_labels() -> bool      { config().node_labels }
 pub fn label_size()  -> f32       { config().label_size }
 pub fn show_icons()  -> bool      { config().show_icons }
 pub fn color_clusters() -> bool   { config().color_clusters }
+pub fn node_style()  -> NodeStyle { config().node_style }
+pub fn map_sensitivity() -> f32   { config().map_sensitivity }
 pub fn bg_style()    -> BgStyle   { config().bg_style }
 pub fn variant()     -> UiVariant { config().variant }
 

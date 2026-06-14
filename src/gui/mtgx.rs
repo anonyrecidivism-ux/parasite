@@ -3,7 +3,7 @@
 //! (`<mtg:MaltegoEntity type="maltego.Domain">…<mtg:Value>…</mtg:Value>`); edges
 //! reference node ids. We map Maltego entity types onto our own `Kind`s.
 
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 
 use eframe::egui::Pos2;
 use regex::Regex;
@@ -41,6 +41,76 @@ fn unescape(s: &str) -> String {
     s.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
         .replace("&quot;", "\"").replace("&#39;", "'").replace("&apos;", "'")
         .trim().to_string()
+}
+
+/// Maltego entity type + main property name for a kind (used when exporting).
+fn rev_type(kind: Kind) -> (&'static str, &'static str) {
+    match kind {
+        Kind::Domain       => ("maltego.Domain", "fqdn"),
+        Kind::Website      => ("maltego.URL", "url"),
+        Kind::Ip           => ("maltego.IPv4Address", "ipv4-address"),
+        Kind::Netblock     => ("maltego.Netblock", "ipv4-range"),
+        Kind::Asn          => ("maltego.AS", "as.number"),
+        Kind::Email        => ("maltego.EmailAddress", "email"),
+        Kind::Phone        => ("maltego.PhoneNumber", "phonenumber"),
+        Kind::Person       => ("maltego.Person", "person.fullname"),
+        Kind::Username     => ("maltego.Alias", "alias"),
+        Kind::Social       => ("maltego.URL", "url"),
+        Kind::Organization => ("maltego.Company", "company"),
+        Kind::Location     => ("maltego.Location", "location.name"),
+        Kind::Cve          => ("maltego.Vulnerability", "vulnerability.id"),
+        Kind::Hash         => ("maltego.Hash", "properties.hash"),
+        Kind::Port         => ("maltego.Port", "port.number"),
+        Kind::Service      => ("maltego.Service", "service.name"),
+        Kind::Document     => ("maltego.Document", "title"),
+        _                  => ("maltego.Phrase", "text"),
+    }
+}
+
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+        .replace('"', "&quot;").replace('\'', "&apos;")
+}
+
+/// Export the graph as a Maltego `.mtgx` archive.
+pub fn export(path: &str, graph: &Graph) -> io::Result<()> {
+    let mut ids: Vec<u64> = graph.entities.keys().copied().collect();
+    ids.sort_unstable();
+    let index: std::collections::HashMap<u64, usize> =
+        ids.iter().enumerate().map(|(i, &id)| (id, i)).collect();
+
+    let mut xml = String::new();
+    xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    xml.push_str("<graphml xmlns=\"http://graphml.graphdrawing.org/xmlns\" \
+                  xmlns:mtg=\"http://maltego.paterva.com/xml/mtgx\">\n");
+    xml.push_str("<key id=\"d0\" for=\"node\" yfiles.type=\"entity\"/>\n");
+    xml.push_str("<graph edgedefault=\"directed\">\n");
+
+    for (&id, &i) in &index {
+        let e = &graph.entities[&id];
+        let (etype, prop) = rev_type(e.kind);
+        xml.push_str(&format!(
+            "<node id=\"n{i}\"><data key=\"d0\"><mtg:MaltegoEntity type=\"{etype}\">\
+             <mtg:Properties><mtg:Property name=\"{prop}\" displayName=\"{}\">\
+             <mtg:Value>{}</mtg:Value></mtg:Property></mtg:Properties>\
+             </mtg:MaltegoEntity></data></node>\n",
+            e.kind.label(), xml_escape(&e.value)));
+    }
+    for e in &graph.edges {
+        if let (Some(&a), Some(&b)) = (index.get(&e.from), index.get(&e.to)) {
+            xml.push_str(&format!("<edge source=\"n{a}\" target=\"n{b}\"/>\n"));
+        }
+    }
+    xml.push_str("</graph>\n</graphml>\n");
+
+    let file = std::fs::File::create(path)?;
+    let mut zip = zip::ZipWriter::new(file);
+    let opts: zip::write::SimpleFileOptions = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated);
+    zip.start_file("Graphs/Graph1.graphml", opts).map_err(to_io)?;
+    zip.write_all(xml.as_bytes())?;
+    zip.finish().map_err(to_io)?;
+    Ok(())
 }
 
 pub fn import(path: &str) -> io::Result<Graph> {
@@ -107,6 +177,24 @@ fn parse_graphml(xml: &str) -> Graph {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn export_import_roundtrip() {
+        use eframe::egui::Pos2;
+        let mut g = Graph::new();
+        let a = g.add(Kind::Domain, "example.com", Pos2::ZERO);
+        let b = g.add(Kind::Ip, "93.184.216.34", Pos2::ZERO);
+        g.link(a, b, "resolves");
+        let path = std::env::temp_dir().join("parasite_test_roundtrip.mtgx");
+        let p = path.to_str().unwrap();
+        export(p, &g).expect("export");
+        let g2 = import(p).expect("import");
+        assert_eq!(g2.entities.len(), 2);
+        assert_eq!(g2.edges.len(), 1);
+        assert!(g2.find(Kind::Domain, "example.com").is_some());
+        assert!(g2.find(Kind::Ip, "93.184.216.34").is_some());
+        let _ = std::fs::remove_file(path);
+    }
 
     #[test]
     fn parses_maltego_graphml() {

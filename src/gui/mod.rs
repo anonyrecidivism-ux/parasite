@@ -7,6 +7,7 @@ mod app;
 mod canvas;
 mod engine;
 mod export;
+mod geoint;
 mod install;
 mod keys;
 mod logo;
@@ -21,8 +22,13 @@ use eframe::egui::{self, Color32, FontFamily, FontId, Margin, RichText, Rounding
 use settings::Settings;
 use theme::*;
 
+#[derive(Clone, Copy, PartialEq)]
+enum AppMode { Graph, Geo }
+
 struct Shell {
+    mode:          AppMode,
     graph:         app::GraphPanel,
+    geo:           geoint::GeoPanel,
     settings:      Settings,
     show_settings: bool,
 }
@@ -33,11 +39,24 @@ impl Shell {
         let settings = Settings::load();
         settings.apply(&cc.egui_ctx);
         Self {
+            mode: AppMode::Graph,
             graph: app::GraphPanel::new(),
+            geo: geoint::GeoPanel::new(),
             show_settings: false,
             settings,
         }
     }
+}
+
+/// Open a URL in the system browser.
+pub fn app_open(url: &str) {
+    let url = url.to_string();
+    #[cfg(target_os = "linux")]
+    let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg(&url).spawn();
+    #[cfg(target_os = "windows")]
+    let _ = std::process::Command::new("cmd").args(["/C", "start", "", &url]).spawn();
 }
 
 impl eframe::App for Shell {
@@ -51,7 +70,10 @@ impl eframe::App for Shell {
                     logo::widget(ui, 12.0);
                     ui.add_space(5.0);
                     ui.label(RichText::new("parasite").color(text_pri()).strong().size(15.0));
-                    ui.label(RichText::new("OSINT graph · open-source Maltego").color(text_mut()).size(12.0));
+                    ui.add_space(14.0);
+
+                    mode_tab(ui, &mut self.mode, AppMode::Graph, "◇ Graph");
+                    mode_tab(ui, &mut self.mode, AppMode::Geo, "◎ GEOINT");
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let gear = ui.add(egui::Button::new(
@@ -71,13 +93,28 @@ impl eframe::App for Shell {
                 });
             });
 
-        self.graph.ui(ctx);
+        match self.mode {
+            AppMode::Graph => self.graph.ui(ctx),
+            AppMode::Geo   => self.geo.ui(ctx),
+        }
 
         self.settings_window(ctx);
         if !self.settings.welcomed {
             self.welcome_window(ctx);
         }
     }
+}
+
+fn mode_tab(ui: &mut egui::Ui, mode: &mut AppMode, this: AppMode, label: &str) {
+    let active = *mode == this;
+    let (fill, txt) = if active { (bg_item_sel(), text_pri()) } else { (Color32::TRANSPARENT, text_sec()) };
+    let r = ui.add(egui::Button::new(RichText::new(label).color(txt).size(12.5).strong())
+        .fill(fill)
+        .stroke(if active { Stroke::new(1.0, accent_dark()) } else { Stroke::NONE })
+        .rounding(Rounding::same(5.0)));
+    if r.hovered() { ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand); }
+    if r.clicked() { *mode = this; }
+    ui.add_space(4.0);
 }
 
 impl Shell {
@@ -157,6 +194,17 @@ impl Shell {
                     .text("font scale")).changed();
 
                 ui.horizontal(|ui| {
+                    ui.label(RichText::new("node style").color(text_pri()).size(12.0));
+                    egui::ComboBox::from_id_salt("style_combo")
+                        .selected_text(RichText::new(self.settings.node_style.label()).color(text_pri()))
+                        .show_ui(ui, |ui| {
+                            for s in theme::NodeStyle::ALL {
+                                if ui.selectable_value(&mut self.settings.node_style, s,
+                                    RichText::new(s.label()).color(text_pri())).clicked() { changed = true; }
+                            }
+                        });
+                });
+                ui.horizontal(|ui| {
                     ui.label(RichText::new("node shape").color(text_pri()).size(12.0));
                     egui::ComboBox::from_id_salt("shape_combo")
                         .selected_text(RichText::new(self.settings.node_shape.label()).color(text_pri()))
@@ -190,6 +238,12 @@ impl Shell {
                     RichText::new("node icons").color(text_pri())).changed();
                 changed |= ui.checkbox(&mut self.settings.color_clusters,
                     RichText::new("colour nodes by cluster").color(text_pri())).changed();
+
+                ui.add_space(8.0);
+                ui.label(RichText::new("GEOINT MAP").color(text_mut()).size(10.0).strong());
+                ui.add_space(4.0);
+                changed |= ui.add(egui::Slider::new(&mut self.settings.map_sensitivity, 0.2..=2.0)
+                    .text("zoom sensitivity")).changed();
                 changed |= ui.checkbox(&mut self.settings.show_grid,
                     RichText::new("show background pattern").color(text_pri())).changed();
                 changed |= ui.checkbox(&mut self.settings.edge_labels,

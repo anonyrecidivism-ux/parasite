@@ -166,6 +166,21 @@ pub struct Entity {
     pub pos:    Pos2,
     pub vel:    Vec2,
     pub pinned: bool,
+    pub note:   String,
+    /// 0 = none, 1 = important (red), 2 = verified (green), 3 = target (orange).
+    pub flag:   u8,
+    /// Time (egui seconds) the node was first drawn — drives the spawn animation.
+    /// Not serialised; `None` means "animate from the next frame".
+    pub anim_start: Option<f64>,
+}
+
+pub fn flag_color(flag: u8) -> Option<Color32> {
+    match flag {
+        1 => Some(Color32::from_rgb(220, 80, 75)),
+        2 => Some(Color32::from_rgb(95, 185, 110)),
+        3 => Some(Color32::from_rgb(235, 160, 70)),
+        _ => None,
+    }
 }
 
 #[derive(Clone)]
@@ -194,6 +209,7 @@ impl Graph {
         self.entities.insert(id, Entity {
             id, kind, value: value.into(), props: Vec::new(),
             pos, vel: Vec2::ZERO, pinned: false,
+            note: String::new(), flag: 0, anim_start: None,
         });
         id
     }
@@ -258,6 +274,7 @@ impl Graph {
             entities: self.entities.values().map(|e| EntityData {
                 id: e.id, kind: e.kind, value: e.value.clone(), props: e.props.clone(),
                 x: e.pos.x, y: e.pos.y, pinned: e.pinned,
+                note: e.note.clone(), flag: e.flag,
             }).collect(),
             edges: self.edges.iter().map(|e| EdgeData {
                 from: e.from, to: e.to, label: e.label.clone(),
@@ -271,6 +288,7 @@ impl Graph {
             entities.insert(e.id, Entity {
                 id: e.id, kind: e.kind, value: e.value, props: e.props,
                 pos: Pos2::new(e.x, e.y), vel: Vec2::ZERO, pinned: e.pinned,
+                note: e.note, flag: e.flag, anim_start: None,
             });
         }
         let edges = d.edges.into_iter()
@@ -282,14 +300,14 @@ impl Graph {
 }
 
 /// On-disk representation of a graph (JSON via serde).
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct GraphData {
     pub next_id:  u64,
     pub entities: Vec<EntityData>,
     pub edges:    Vec<EdgeData>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct EntityData {
     pub id:     u64,
     pub kind:   Kind,
@@ -298,9 +316,13 @@ pub struct EntityData {
     pub x:      f32,
     pub y:      f32,
     pub pinned: bool,
+    #[serde(default)]
+    pub note:   String,
+    #[serde(default)]
+    pub flag:   u8,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct EdgeData {
     pub from:  u64,
     pub to:    u64,

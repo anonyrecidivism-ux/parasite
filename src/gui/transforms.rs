@@ -74,6 +74,10 @@ pub const TRANSFORMS: &[TransformDef] = &[
                    desc: "reputation & detections — needs VirusTotal key" },
     TransformDef { id: "dom_certspotter", name: "Subdomains (CertSpotter)", applies: Kind::Domain,
                    desc: "certificate transparency via api.certspotter.com" },
+    TransformDef { id: "dom_otx",      name: "Passive DNS (OTX)",  applies: Kind::Domain,
+                   desc: "AlienVault OTX passive DNS → subdomains & IPs" },
+    TransformDef { id: "dom_urlscan",  name: "urlscan.io",         applies: Kind::Domain,
+                   desc: "recent urlscan.io submissions for this domain" },
     TransformDef { id: "dom_subfinder", name: "subfinder (CLI)",    applies: Kind::Domain,
                    desc: "passive subdomain enum — runs the subfinder tool" },
     TransformDef { id: "dom_waybackurls", name: "waybackurls (CLI)", applies: Kind::Domain,
@@ -146,6 +150,12 @@ pub const TRANSFORMS: &[TransformDef] = &[
                    desc: "reputation & detections — needs VirusTotal key" },
     TransformDef { id: "ip_abuse",     name: "AbuseIPDB Check",    applies: Kind::Ip,
                    desc: "abuse score & reports — needs AbuseIPDB key" },
+    TransformDef { id: "ip_otx",       name: "Threat Intel (OTX)", applies: Kind::Ip,
+                   desc: "AlienVault OTX pulses, ASN & country" },
+    TransformDef { id: "ip_internetdb",name: "Shodan InternetDB",  applies: Kind::Ip,
+                   desc: "free: open ports, vulns (CVE), hostnames, tags" },
+    TransformDef { id: "ip_ipapi",     name: "Geo + ASN (ip-api)", applies: Kind::Ip,
+                   desc: "free city/country/ISP/ASN + coordinates" },
     TransformDef { id: "ip_website",   name: "To Website",         applies: Kind::Ip,
                    desc: "build http:// website for this IP" },
     // ── ASN ───────────────────────────────────────────────────────────────────
@@ -206,6 +216,8 @@ pub const TRANSFORMS: &[TransformDef] = &[
                    desc: "guess the hash type from length & charset" },
     TransformDef { id: "hash_lookup",  name: "Dictionary Lookup",  applies: Kind::Hash,
                    desc: "check against a built-in table of common hashes" },
+    TransformDef { id: "hash_circl",   name: "CIRCL hashlookup",   applies: Kind::Hash,
+                   desc: "is this a known file? (hashlookup.circl.lu)" },
     TransformDef { id: "hash_vt",      name: "VirusTotal File",    applies: Kind::Hash,
                    desc: "malware report for this file hash — needs VirusTotal key" },
 ];
@@ -430,6 +442,12 @@ pub async fn run(id: &str, value: &str) -> Outcome {
         "dom_hunter" => hunter(&v, &mut o).await,
         // ── more real APIs ──
         "dom_certspotter" => certspotter(&v, &mut o).await,
+        "dom_otx"    => otx_domain(&v, &mut o).await,
+        "ip_otx"     => otx_ip(&v, &mut o).await,
+        "ip_internetdb" => internetdb(&v, &mut o).await,
+        "ip_ipapi"   => ipapi(&v, &mut o).await,
+        "dom_urlscan" => urlscan(&v, &mut o).await,
+        "hash_circl" => circl_hash(&v, &mut o).await,
         "cve_nvd"    => nvd_cve(&v, &mut o).await,
         "hash_vt"    => virustotal_file(&v, &mut o).await,
         // ── external GitHub CLI tools (optional) ──
@@ -1500,6 +1518,124 @@ async fn hunter(domain: &str, o: &mut Outcome) {
         }
     }
     o.log.push(format!("✓  Hunter.io: {n} email(s)"));
+}
+
+// ── Shodan InternetDB (free, no key) ───────────────────────────────────────────
+async fn internetdb(ip: &str, o: &mut Outcome) {
+    let url = format!("https://internetdb.shodan.io/{}", enc(ip.trim()));
+    let resp = match client().get(&url).send().await {
+        Ok(r) => r, Err(e) => { o.log.push(format!("✗  {e}")); return; }
+    };
+    if resp.status().as_u16() == 404 { o.log.push("◦  no InternetDB data for this IP".into()); return; }
+    let j: serde_json::Value = serde_json::from_str(&resp.text().await.unwrap_or_default()).unwrap_or_default();
+    let arr = |k: &str| j.get(k).and_then(|v| v.as_array()).cloned().unwrap_or_default();
+    let ports = arr("ports");
+    for p in &ports { if let Some(n) = p.as_u64() { o.item(Kind::Port, n.to_string(), "open port"); } }
+    for h in arr("hostnames") { if let Some(s) = h.as_str() { o.item(Kind::Domain, s.to_string(), "hostname"); } }
+    for vu in arr("vulns") { if let Some(s) = vu.as_str() { o.item(Kind::Cve, s.to_string(), "vulnerable to"); } }
+    for t in arr("tags") { if let Some(s) = t.as_str() { o.item(Kind::Phrase, s.to_string(), "tag"); } }
+    for c in arr("cpes").iter().take(10) { if let Some(s) = c.as_str() { o.item(Kind::Service, s.to_string(), "cpe"); } }
+    o.log.push(format!("✓  {} port(s), {} vuln(s), {} hostname(s)",
+        ports.len(), arr("vulns").len(), arr("hostnames").len()));
+}
+
+// ── ip-api.com (free, no key) ──────────────────────────────────────────────────
+async fn ipapi(ip: &str, o: &mut Outcome) {
+    let url = format!("http://ip-api.com/json/{}?fields=status,country,regionName,city,lat,lon,isp,org,as,query", enc(ip.trim()));
+    let resp = match client().get(&url).send().await {
+        Ok(r) => r, Err(e) => { o.log.push(format!("✗  {e}")); return; }
+    };
+    let j: serde_json::Value = serde_json::from_str(&resp.text().await.unwrap_or_default()).unwrap_or_default();
+    let s = |k: &str| j.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    if j.get("status").and_then(|v| v.as_str()) != Some("success") {
+        o.log.push("◦  ip-api returned no data".into()); return;
+    }
+    let loc: Vec<String> = [s("city"), s("regionName"), s("country")].into_iter().filter(|x| !x.is_empty()).collect();
+    if !loc.is_empty() { o.item(Kind::Location, loc.join(", "), "located in"); }
+    if !s("org").is_empty()  { o.item(Kind::Organization, s("org"), "org"); }
+    if !s("isp").is_empty() && s("isp") != s("org") { o.item(Kind::Organization, s("isp"), "ISP"); }
+    let asn = s("as");
+    if asn.starts_with("AS") { o.item(Kind::Asn, asn.split_whitespace().next().unwrap_or(&asn).to_string(), "ASN"); }
+    if let (Some(la), Some(lo)) = (j.get("lat").and_then(|v| v.as_f64()), j.get("lon").and_then(|v| v.as_f64())) {
+        o.item(Kind::Coordinate, format!("{la:.4}, {lo:.4}"), "geo");
+        o.log.push(format!("✓  {} · {la:.4},{lo:.4}", loc.join(", ")));
+    }
+}
+
+// ── AlienVault OTX (free) ──────────────────────────────────────────────────────
+async fn otx_domain(domain: &str, o: &mut Outcome) {
+    let url = format!("https://otx.alienvault.com/api/v1/indicators/domain/{}/passive_dns", enc(domain));
+    let resp = match client().get(&url).send().await {
+        Ok(r) => r, Err(e) => { o.log.push(format!("✗  {e}")); return; }
+    };
+    let j: serde_json::Value = serde_json::from_str(&resp.text().await.unwrap_or_default()).unwrap_or_default();
+    let mut n = 0;
+    if let Some(arr) = j.get("passive_dns").and_then(|v| v.as_array()) {
+        let mut seen: Vec<String> = Vec::new();
+        for rec in arr {
+            if let Some(h) = rec.get("hostname").and_then(|v| v.as_str()) {
+                let h = h.to_lowercase();
+                if h.ends_with(domain) && !seen.contains(&h) { seen.push(h.clone()); if seen.len() <= 150 { o.item(Kind::Domain, h, "passive dns"); } }
+            }
+            if let Some(a) = rec.get("address").and_then(|v| v.as_str()) {
+                if a.parse::<std::net::Ipv4Addr>().is_ok() { o.item(Kind::Ip, a.to_string(), "resolved"); }
+            }
+            n += 1;
+        }
+    }
+    o.log.push(format!("✓  {n} passive-DNS record(s) from OTX"));
+}
+
+async fn otx_ip(ip: &str, o: &mut Outcome) {
+    let url = format!("https://otx.alienvault.com/api/v1/indicators/IPv4/{}/general", enc(ip));
+    let resp = match client().get(&url).send().await {
+        Ok(r) => r, Err(e) => { o.log.push(format!("✗  {e}")); return; }
+    };
+    let j: serde_json::Value = serde_json::from_str(&resp.text().await.unwrap_or_default()).unwrap_or_default();
+    let pulses = j.pointer("/pulse_info/count").and_then(|v| v.as_u64()).unwrap_or(0);
+    o.log.push(format!("{}  {pulses} threat pulse(s)", if pulses > 0 { "⚠" } else { "✓" }));
+    o.props.push(("otx_pulses".into(), pulses.to_string()));
+    if let Some(asn) = j.get("asn").and_then(|v| v.as_str()) { o.item(Kind::Asn, asn.split_whitespace().next().unwrap_or(asn).to_string(), "ASN"); }
+    if let Some(c) = j.get("country_name").and_then(|v| v.as_str()) { if !c.is_empty() { o.item(Kind::Location, c.to_string(), "country"); } }
+}
+
+async fn urlscan(domain: &str, o: &mut Outcome) {
+    let url = format!("https://urlscan.io/api/v1/search/?q=domain:{}&size=25", enc(domain));
+    let resp = match client().get(&url).send().await {
+        Ok(r) => r, Err(e) => { o.log.push(format!("✗  {e}")); return; }
+    };
+    let j: serde_json::Value = serde_json::from_str(&resp.text().await.unwrap_or_default()).unwrap_or_default();
+    let mut n = 0;
+    if let Some(arr) = j.get("results").and_then(|v| v.as_array()) {
+        let mut seen: Vec<String> = Vec::new();
+        for r in arr {
+            if let Some(u) = r.pointer("/page/url").and_then(|v| v.as_str()) {
+                if !seen.contains(&u.to_string()) { seen.push(u.to_string()); o.item(Kind::Website, u.to_string(), "urlscan"); n += 1; }
+            }
+            if let Some(ip) = r.pointer("/page/ip").and_then(|v| v.as_str()) {
+                if ip.parse::<std::net::Ipv4Addr>().is_ok() { o.item(Kind::Ip, ip.to_string(), "hosted on"); }
+            }
+        }
+    }
+    o.log.push(format!("✓  {n} urlscan submission(s)"));
+}
+
+async fn circl_hash(hash: &str, o: &mut Outcome) {
+    let h = hash.trim();
+    let algo = match h.len() { 32 => "md5", 40 => "sha1", 64 => "sha256", _ => { o.log.push("◦  need an MD5/SHA1/SHA256 hash".into()); return; } };
+    let url = format!("https://hashlookup.circl.lu/lookup/{algo}/{}", enc(h));
+    let resp = match client().get(&url).header("Accept", "application/json").send().await {
+        Ok(r) => r, Err(e) => { o.log.push(format!("✗  {e}")); return; }
+    };
+    if resp.status().as_u16() == 404 { o.log.push("◦  hash not known to CIRCL".into()); return; }
+    let j: serde_json::Value = serde_json::from_str(&resp.text().await.unwrap_or_default()).unwrap_or_default();
+    if let Some(name) = j.get("FileName").and_then(|v| v.as_str()) {
+        o.log.push(format!("✓  known file: {name}"));
+        o.props.push(("filename".into(), name.into()));
+        o.item(Kind::File, name.to_string(), "known as");
+    }
+    if let Some(src) = j.get("source").and_then(|v| v.as_str()) { o.props.push(("source".into(), src.into())); }
+    o.props.push(("known".into(), "yes (CIRCL)".into()));
 }
 
 // ── more real APIs ─────────────────────────────────────────────────────────────

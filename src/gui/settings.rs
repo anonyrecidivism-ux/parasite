@@ -5,11 +5,13 @@ use eframe::egui::{self, Color32};
 use serde::{Deserialize, Serialize};
 
 use super::keys::{self, ApiKeys};
-use super::theme::{self, BgStyle, NodeShape, UiConfig, UiVariant};
+use super::theme::{self, BgStyle, NodeShape, NodeStyle, UiConfig, UiVariant};
 
 fn d_shape() -> NodeShape  { NodeShape::Circle }
 fn d_bg()    -> BgStyle    { BgStyle::Grid }
 fn d_var()   -> UiVariant  { UiVariant::Standard }
+fn d_style() -> NodeStyle  { NodeStyle::Flat }
+fn d_sens()  -> f32        { 0.6 }
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Settings {
@@ -37,6 +39,10 @@ pub struct Settings {
     pub show_icons:  bool,
     #[serde(default)]
     pub color_clusters: bool,
+    #[serde(default = "d_style")]
+    pub node_style:  NodeStyle,
+    #[serde(default = "d_sens")]
+    pub map_sensitivity: f32,
     #[serde(default)]
     pub api:         ApiKeys,
     pub welcomed:    bool,
@@ -64,6 +70,8 @@ impl Default for Settings {
             label_size: 12.0,
             show_icons: true,
             color_clusters: false,
+            node_style: NodeStyle::Flat,
+            map_sensitivity: 0.6,
             api: ApiKeys::default(),
             welcomed: false,
         }
@@ -115,6 +123,8 @@ impl Settings {
             label_size:  self.label_size.clamp(8.0, 20.0),
             show_icons:  self.show_icons,
             color_clusters: self.color_clusters,
+            node_style:  self.node_style,
+            map_sensitivity: self.map_sensitivity.clamp(0.15, 2.5),
             bg_style:    self.bg_style,
             variant:     self.variant,
         });

@@ -4,6 +4,7 @@
 use std::collections::HashSet;
 
 use eframe::egui::{self, Color32, FontFamily, FontId, Pos2, Rect, Rounding, Sense, Stroke, Vec2};
+use eframe::egui::epaint::Mesh;
 
 use super::model::Graph;
 use super::theme::*;
@@ -14,6 +15,8 @@ use super::theme::*;
 pub struct Selection {
     pub set:     HashSet<u64>,
     pub primary: Option<u64>,
+    /// A selected edge (index into graph.edges), if any.
+    pub edge:    Option<usize>,
 }
 
 impl Selection {
@@ -21,8 +24,10 @@ impl Selection {
         self.set.clear();
         self.set.insert(id);
         self.primary = Some(id);
+        self.edge = None;
     }
     pub fn toggle(&mut self, id: u64) {
+        self.edge = None;
         if self.set.remove(&id) {
             if self.primary == Some(id) { self.primary = self.set.iter().next().copied(); }
         } else {
@@ -30,7 +35,7 @@ impl Selection {
             self.primary = Some(id);
         }
     }
-    pub fn clear(&mut self) { self.set.clear(); self.primary = None; }
+    pub fn clear(&mut self) { self.set.clear(); self.primary = None; self.edge = None; }
     pub fn contains(&self, id: u64) -> bool { self.set.contains(&id) }
 }
 
@@ -39,11 +44,12 @@ pub struct View {
     pub zoom: f32,
     drag_node:    Option<u64>,
     marquee_from: Option<Pos2>, // screen-space marquee anchor
+    linking_from: Option<u64>,  // node we're drawing a new edge from (Ctrl-drag)
 }
 
 impl Default for View {
     fn default() -> Self {
-        Self { pan: Vec2::ZERO, zoom: 1.0, drag_node: None, marquee_from: None }
+        Self { pan: Vec2::ZERO, zoom: 1.0, drag_node: None, marquee_from: None, linking_from: None }
     }
 }
 
@@ -53,6 +59,8 @@ pub struct CanvasAction {
     pub run_default: Option<u64>,
     /// (entity id, screen position) where a context menu was requested.
     pub context: Option<(u64, Pos2)>,
+    /// A manual edge the user drew (Ctrl-drag from one node to another).
+    pub new_link: Option<(u64, u64)>,
 }
 
 impl View {
@@ -97,6 +105,7 @@ pub fn draw(
     let painter = ui.painter_at(rect);
     let center = rect.center();
     let shift = ui.input(|i| i.modifiers.shift);
+    let ctrl  = ui.input(|i| i.modifiers.ctrl || i.modifiers.command);
 
     painter.rect_filled(rect, Rounding::ZERO, bg_canvas());
     if show_grid() {
@@ -128,11 +137,16 @@ pub fn draw(
     // ── Begin drag ─────────────────────────────────────────────────────────────
     if response.drag_started() {
         if let Some(id) = hit {
-            // Dragging a node moves the whole selection (select it first if new).
-            if !sel.contains(id) {
-                if shift { sel.toggle(id); } else { sel.select_one(id); }
+            if ctrl {
+                // Ctrl-drag from a node → draw a new edge.
+                view.linking_from = Some(id);
+            } else {
+                // Dragging a node moves the whole selection (select it first if new).
+                if !sel.contains(id) {
+                    if shift { sel.toggle(id); } else { sel.select_one(id); }
+                }
+                view.drag_node = Some(id);
             }
-            view.drag_node = Some(id);
         } else if shift {
             // Shift + empty drag → marquee select.
             view.marquee_from = pointer;
@@ -143,7 +157,9 @@ pub fn draw(
     // ── Apply drag ─────────────────────────────────────────────────────────────
     if response.dragged() {
         let delta = response.drag_delta();
-        if let Some(_id) = view.drag_node {
+        if view.linking_from.is_some() {
+            // linking: rubber band is drawn below; nothing moves
+        } else if let Some(_id) = view.drag_node {
             // move every selected node
             let ids: Vec<u64> = sel.set.iter().copied().collect();
             for id in ids {
@@ -158,6 +174,15 @@ pub fn draw(
         }
     }
 
+    // ── Rubber-band while linking ───────────────────────────────────────────────
+    if let (Some(from), Some(cur)) = (view.linking_from, pointer) {
+        if let Some(a) = graph.entities.get(&from) {
+            let pa = view.w2s(center, a.pos);
+            painter.line_segment([pa, cur], Stroke::new(2.0, accent()));
+            painter.circle_stroke(cur, 5.0, Stroke::new(1.5, accent()));
+        }
+    }
+
     // ── Draw marquee + select on release ───────────────────────────────────────
     if let (Some(from), Some(cur)) = (view.marquee_from, pointer) {
         let mrect = Rect::from_two_pos(from, cur);
@@ -166,6 +191,14 @@ pub fn draw(
         painter.rect_stroke(mrect, Rounding::same(2.0), Stroke::new(1.0, accent()));
     }
     if response.drag_stopped() {
+        // finish a manual link
+        if let Some(from) = view.linking_from.take() {
+            let drop = pointer.or(ui.input(|i| i.pointer.interact_pos()))
+                .and_then(|p| node_at(graph, view, center, p));
+            if let Some(to) = drop {
+                if to != from { action.new_link = Some((from, to)); }
+            }
+        }
         if let (Some(from), Some(cur)) = (view.marquee_from, pointer.or(ui.input(|i| i.pointer.interact_pos()))) {
             let mrect = Rect::from_two_pos(from, cur);
             if !shift { sel.clear(); }
@@ -185,7 +218,14 @@ pub fn draw(
         match hit {
             Some(id) if shift => sel.toggle(id),
             Some(id)          => sel.select_one(id),
-            None              => sel.clear(),
+            None => {
+                // clicked empty space: maybe an edge?
+                if let Some(ei) = pointer.and_then(|p| edge_at(graph, view, center, p)) {
+                    sel.set.clear(); sel.primary = None; sel.edge = Some(ei);
+                } else {
+                    sel.clear();
+                }
+            }
         }
     }
     if response.double_clicked() {
@@ -198,41 +238,61 @@ pub fn draw(
         }
     }
 
+    // ── Spawn-animation clock (also drives edge draw-in) ──────────────────────
+    const SPAWN_DUR: f64 = 0.45;
+    let now = ui.input(|i| i.time);
+    for e in graph.entities.values_mut() {
+        if e.anim_start.is_none() { e.anim_start = Some(now); }
+    }
+    let node_prog = |id: u64| -> f32 {
+        graph.entities.get(&id)
+            .map(|e| (((now - e.anim_start.unwrap_or(now)) / SPAWN_DUR).clamp(0.0, 1.0)) as f32)
+            .unwrap_or(1.0)
+    };
+
     // ── Draw edges ─────────────────────────────────────────────────────────────
     let curved = edge_curved();
-    for edge in &graph.edges {
+    for (ei, edge) in graph.edges.iter().enumerate() {
         let (Some(a), Some(b)) = (graph.entities.get(&edge.from), graph.entities.get(&edge.to)) else { continue };
         if !finite(a.pos) || !finite(b.pos) { continue; }
         let pa = view.w2s(center, a.pos);
         let pb = view.w2s(center, b.pos);
-        let estroke = Stroke::new(edge_width(), border());
+        let estroke = if sel.edge == Some(ei) {
+            Stroke::new((edge_width() + 1.5).max(2.5), accent())
+        } else {
+            Stroke::new(edge_width(), border())
+        };
 
+        let ep = node_prog(edge.to).max(0.02); // edge grows in as the child appears
         let (mid, dir) = if curved {
             // quadratic curve: control point offset perpendicular to the chord
             let chord = pb - pa;
             let perp = Vec2::new(-chord.y, chord.x).normalized();
             let ctrl = pa + chord * 0.5 + perp * (chord.length() * 0.16);
-            let mut pts = Vec::with_capacity(13);
-            for i in 0..=12 {
-                let t = i as f32 / 12.0;
+            let steps = (12.0 * ep).ceil().max(1.0) as usize;
+            let mut pts = Vec::with_capacity(steps + 1);
+            for i in 0..=steps {
+                let t = (i as f32 / 12.0).min(ep);
                 let u = 1.0 - t;
                 pts.push((pa.to_vec2() * (u * u) + ctrl.to_vec2() * (2.0 * u * t) + pb.to_vec2() * (t * t)).to_pos2());
             }
             painter.add(egui::Shape::line(pts.clone(), estroke));
-            let tip_dir = (pb - pts[11]).normalized();
-            (ctrl, tip_dir)
+            (ctrl, (pb - pa).normalized())
         } else {
-            painter.line_segment([pa, pb], estroke);
+            let pb_a = pa + (pb - pa) * ep;
+            painter.line_segment([pa, pb_a], estroke);
             (pa + (pb - pa) * 0.5, (pb - pa).normalized())
         };
 
-        // arrow head near b
-        let tip = pb - dir * (node_radius() * view.zoom + 2.0);
-        let perp = Vec2::new(-dir.y, dir.x);
-        let s = 6.0 * view.zoom.clamp(0.6, 1.4);
-        painter.line_segment([tip, tip - dir * s + perp * s * 0.6], estroke);
-        painter.line_segment([tip, tip - dir * s - perp * s * 0.6], estroke);
-        if edge_labels() && view.zoom > 0.7 && !edge.label.is_empty() {
+        // arrow head near b — only once the edge has fully drawn in
+        if ep > 0.96 {
+            let tip = pb - dir * (node_radius() * view.zoom + 2.0);
+            let perp = Vec2::new(-dir.y, dir.x);
+            let s = 6.0 * view.zoom.clamp(0.6, 1.4);
+            painter.line_segment([tip, tip - dir * s + perp * s * 0.6], estroke);
+            painter.line_segment([tip, tip - dir * s - perp * s * 0.6], estroke);
+        }
+        if ep > 0.96 && edge_labels() && view.zoom > 0.7 && !edge.label.is_empty() {
             painter.text(mid, egui::Align2::CENTER_CENTER, &edge.label,
                 FontId::new(9.5, FontFamily::Proportional), text_mut());
         }
@@ -249,6 +309,9 @@ pub fn draw(
         components(graph)
     } else { std::collections::HashMap::new() };
 
+    // ── Spawn animation: pop-in scale (clock computed above for edges too) ─────
+    let mut animating = false;
+
     // stable draw order
     let mut ids: Vec<u64> = graph.entities.keys().copied().collect();
     ids.sort_unstable();
@@ -256,6 +319,13 @@ pub fn draw(
         let e = &graph.entities[&id];
         let p = view.w2s(center, e.pos);
         if !rect.expand(60.0).contains(p) { continue; }
+
+        // spawn-in scale (ease-out-back overshoot)
+        let prog = ((now - e.anim_start.unwrap_or(now)) / SPAWN_DUR).clamp(0.0, 1.0) as f32;
+        if prog < 1.0 { animating = true; }
+        let grow = ease_out_back(prog);
+        let r = r * grow;
+        let grown = prog > 0.55;
 
         let is_sel = sel.contains(id);
         let is_primary = sel.primary == Some(id);
@@ -272,14 +342,18 @@ pub fn draw(
         } else if is_hov {
             stroke_shape(&painter, p, r + 3.0, shape, Stroke::new(1.5, accent_dark()));
         }
-        fill_shape(&painter, p, r, shape, bg_panel());
-        stroke_shape(&painter, p, r, shape, Stroke::new(2.0, col));
-        fill_shape(&painter, p, r * 0.62, shape, Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), 55));
-        if icons_on {
+        draw_node_body(&painter, p, r, shape, col, node_style());
+        if icons_on && grown {
             painter.text(p, egui::Align2::CENTER_CENTER, e.kind.icon(), icon_font.clone(), col);
         }
+        // flag badge (top-right)
+        if let Some(fc) = super::model::flag_color(e.flag) {
+            let bp = p + Vec2::new(r * 0.72, -r * 0.72);
+            painter.circle_filled(bp, (r * 0.28).max(3.0), fc);
+            painter.circle_stroke(bp, (r * 0.28).max(3.0), Stroke::new(1.0, bg_panel()));
+        }
 
-        if node_labels() && view.zoom > 0.45 {
+        if grown && node_labels() && view.zoom > 0.45 {
             let label: String = {
                 let v = &e.value;
                 if v.chars().count() > 28 { format!("{}…", v.chars().take(27).collect::<String>()) }
@@ -299,6 +373,9 @@ pub fn draw(
         }
     }
 
+    // keep animating the spawn-in
+    if animating { ui.ctx().request_repaint(); }
+
     // hover cursor
     if hit.is_some() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -307,6 +384,39 @@ pub fn draw(
     }
 
     action
+}
+
+/// Ease-out-back: overshoots slightly past 1.0 then settles — a "pop".
+fn ease_out_back(t: f32) -> f32 {
+    if t >= 1.0 { return 1.0; }
+    let c1 = 1.70158_f32;
+    let c3 = c1 + 1.0;
+    let x = t - 1.0;
+    1.0 + c3 * x * x * x + c1 * x * x
+}
+
+/// Hit-test edges: returns the index of the edge whose segment is closest to
+/// `p` within a small threshold.
+fn edge_at(graph: &Graph, view: &View, center: Pos2, p: Pos2) -> Option<usize> {
+    let mut best: Option<(usize, f32)> = None;
+    for (i, e) in graph.edges.iter().enumerate() {
+        let (Some(a), Some(b)) = (graph.entities.get(&e.from), graph.entities.get(&e.to)) else { continue };
+        if !finite(a.pos) || !finite(b.pos) { continue; }
+        let pa = view.w2s(center, a.pos);
+        let pb = view.w2s(center, b.pos);
+        let d = dist_to_segment(p, pa, pb);
+        if d <= 6.0 && best.map_or(true, |(_, bd)| d < bd) { best = Some((i, d)); }
+    }
+    best.map(|(i, _)| i)
+}
+
+fn dist_to_segment(p: Pos2, a: Pos2, b: Pos2) -> f32 {
+    let ab = b - a;
+    let len2 = ab.length_sq();
+    if len2 <= 1e-6 { return p.distance(a); }
+    let t = ((p - a).dot(ab) / len2).clamp(0.0, 1.0);
+    let proj = a + ab * t;
+    p.distance(proj)
 }
 
 fn node_at(graph: &Graph, view: &View, center: Pos2, p: Pos2) -> Option<u64> {
@@ -320,6 +430,42 @@ fn node_at(graph: &Graph, view: &View, center: Pos2, p: Pos2) -> Option<u64> {
         }
     }
     best.map(|(id, _)| id)
+}
+
+/// A small overview map in the bottom-right corner of `area`, showing all nodes
+/// and the current viewport rectangle.
+pub fn draw_minimap(painter: &egui::Painter, graph: &Graph, view: &View, area: Rect) {
+    if graph.entities.len() < 2 { return; }
+    let mm_size = Vec2::new(168.0, 116.0);
+    let mm = Rect::from_min_size(area.right_bottom() - mm_size - Vec2::splat(12.0), mm_size);
+    let bg = bg_panel();
+    painter.rect_filled(mm, Rounding::same(4.0),
+        Color32::from_rgba_unmultiplied(bg.r(), bg.g(), bg.b(), 220));
+    painter.rect_stroke(mm, Rounding::same(4.0), Stroke::new(1.0, border()));
+
+    let (mut min, mut max) = (Pos2::new(f32::MAX, f32::MAX), Pos2::new(f32::MIN, f32::MIN));
+    for e in graph.entities.values() {
+        if !finite(e.pos) { continue; }
+        min.x = min.x.min(e.pos.x); min.y = min.y.min(e.pos.y);
+        max.x = max.x.max(e.pos.x); max.y = max.y.max(e.pos.y);
+    }
+    if !min.x.is_finite() || !max.x.is_finite() { return; }
+    let wsize = (max - min).max(Vec2::new(1.0, 1.0));
+    let pad = 8.0;
+    let scale = ((mm.width() - pad * 2.0) / wsize.x).min((mm.height() - pad * 2.0) / wsize.y);
+    let used = wsize * scale;
+    let off = mm.min + Vec2::splat(pad) + (Vec2::new(mm.width(), mm.height()) - Vec2::splat(pad * 2.0) - used) * 0.5;
+    let map = |p: Pos2| off + (p - min) * scale;
+
+    for e in graph.entities.values() {
+        if !finite(e.pos) { continue; }
+        painter.circle_filled(map(e.pos), 1.6, e.kind.color());
+    }
+    // viewport rectangle (visible world region)
+    let cw = (-view.pan / view.zoom).to_pos2();
+    let half = Vec2::new(area.width(), area.height()) * 0.5 / view.zoom;
+    let vr = Rect::from_min_max(map(cw - half), map(cw + half)).intersect(mm);
+    painter.rect_stroke(vr, Rounding::ZERO, Stroke::new(1.0, accent()));
 }
 
 /// Arrange all nodes on a circle.
@@ -553,6 +699,78 @@ pub fn shape_for_kind(kind: super::model::Kind) -> NodeShape {
         Location | Coordinate                => NodeShape::Triangle,
         Cve | Service | OperatingSystem | Port => NodeShape::Octagon,
         Asn | File | Document | Hash | BtcAddress => NodeShape::Square,
+    }
+}
+
+fn rgba(c: Color32, a: u8) -> Color32 { Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), a) }
+fn blend(a: Color32, b: Color32, t: f32) -> Color32 {
+    let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t) as u8;
+    Color32::from_rgb(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()))
+}
+fn lerp4(a: Color32, b: Color32, t: f32) -> Color32 {
+    let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).clamp(0.0, 255.0) as u8;
+    Color32::from_rgba_unmultiplied(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()), l(a.a(), b.a()))
+}
+
+fn ring_pts(p: Pos2, r: f32, shape: NodeShape) -> Vec<Pos2> {
+    if shape == NodeShape::Circle {
+        (0..30).map(|i| {
+            let a = std::f32::consts::TAU * i as f32 / 30.0;
+            Pos2::new(p.x + r * a.cos(), p.y + r * a.sin())
+        }).collect()
+    } else {
+        shape_pts(p, r, shape)
+    }
+}
+
+/// Fill a node shape with a top→bottom vertical gradient (via a triangle mesh).
+fn gradient_fill(painter: &egui::Painter, p: Pos2, r: f32, shape: NodeShape, top: Color32, bottom: Color32) {
+    let ring = ring_pts(p, r, shape);
+    if ring.len() < 3 { fill_shape(painter, p, r, shape, top); return; }
+    let ytop = p.y - r;
+    let cat = |y: f32| lerp4(top, bottom, ((y - ytop) / (2.0 * r)).clamp(0.0, 1.0));
+    let mut m = Mesh::default();
+    m.colored_vertex(p, cat(p.y));
+    for &pt in &ring { m.colored_vertex(pt, cat(pt.y)); }
+    let n = ring.len() as u32;
+    for i in 0..n { m.add_triangle(0, 1 + i, 1 + (i + 1) % n); }
+    painter.add(egui::Shape::mesh(m));
+}
+
+/// Render a node's body in the chosen visual style.
+fn draw_node_body(painter: &egui::Painter, p: Pos2, r: f32, shape: NodeShape, col: Color32, style: NodeStyle) {
+    let white = Color32::WHITE;
+    match style {
+        NodeStyle::Flat => {
+            fill_shape(painter, p, r, shape, bg_panel());
+            stroke_shape(painter, p, r, shape, Stroke::new(2.0, col));
+            fill_shape(painter, p, r * 0.62, shape, rgba(col, 55));
+        }
+        NodeStyle::Material => {
+            // soft elevation shadow (stacked translucent layers)
+            for k in 0..4 {
+                fill_shape(painter, p + Vec2::new(0.0, r * 0.10 + k as f32 * 1.6),
+                    r + 1.5, shape, rgba(Color32::BLACK, 22));
+            }
+            // tonal surface with a gentle gradient (Material You "surface tint")
+            let surf = blend(bg_panel(), col, 0.30);
+            gradient_fill(painter, p, r, shape, blend(surf, white, 0.14), surf);
+            stroke_shape(painter, p, r, shape, Stroke::new(1.0, rgba(white, 36)));
+        }
+        NodeStyle::Neon => {
+            // glow halo: several rings of decreasing alpha
+            for k in (1..=5).rev() {
+                let a = (40 / k).min(34) as u8;
+                stroke_shape(painter, p, r + k as f32 * 2.4, shape, Stroke::new(3.0, rgba(col, a)));
+            }
+            fill_shape(painter, p, r, shape, blend(bg_app(), col, 0.06));
+            stroke_shape(painter, p, r, shape, Stroke::new(2.2, col));
+            stroke_shape(painter, p, r - 3.0, shape, Stroke::new(1.0, rgba(col, 150)));
+        }
+        NodeStyle::Outline => {
+            fill_shape(painter, p, r, shape, rgba(bg_canvas(), 230));
+            stroke_shape(painter, p, r, shape, Stroke::new(2.0, col));
+        }
     }
 }
 

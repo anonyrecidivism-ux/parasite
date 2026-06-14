@@ -15,6 +15,22 @@ and in-process — no servers, no API keys, no telemetry.
 
 ---
 
+## Two modes
+
+Switch between **◇ Graph** and **◎ GEOINT** in the top bar.
+
+### ◎ GEOINT — geospatial intelligence  ⚠️ *experimental / WIP*
+> **Heads-up:** GEOINT mode is **very buggy and unfinished** — expect rough edges,
+> jank and missing features. It's an early preview, not production-ready.
+
+A standalone geospatial workspace:
+- A live **slippy map** (OpenStreetMap tiles) — pan, zoom, click to drop points.
+- **EXIF GPS extraction** from images — point a photo at it and parasite plots the
+  location and shows camera make/model and capture time.
+- **Markers** with reverse geocoding (OpenStreetMap Nominatim), DMS coordinates,
+  and **distance measuring** between points.
+- One-click links into **Google Maps, Google Earth, Street View** and OSM.
+
 ## The graph workspace
 
 One unified, Maltego-style window:
@@ -50,6 +66,7 @@ A first-run **welcome screen** walks you through the basics. Open **⚙ Settings
   **background style** (grid / dots / plain).
 - **Node size**, **font scale** and **edge-label** toggles.
 
+- **5 node styles**: Flat, **Liquid glass**, **Material You**, **Neon glow**, Outline.
 - **8 node shapes** (circle / square / diamond / triangle / pentagon / hexagon /
   octagon / **by type** — a distinct shape per entity kind).
 - **Edge thickness**, curved edges, node-label toggle.

@@ -9,11 +9,47 @@ them into **Beta 2**.
 
 ---
 
+## [1.0.0-beta.3] — Beta 3 — 2026-06-14
+
+### Added
+- **GEOINT mode** ⚠️ *experimental / very buggy / unfinished* — a standalone
+  geospatial workspace: live OpenStreetMap **and satellite** (Esri) slippy map
+  with smooth fractional zoom, markers, EXIF-GPS extraction from images, reverse
+  geocoding, distance measuring, and Google Maps/Earth/Street View links. (No
+  in-app 3D / Street View — that needs Google's proprietary SDK; use the links.)
+- **Video export (MP4)** — record an animated reveal of the graph to an H.264
+  video with a theme-adaptive parasite logo + name watermark. Length is unlimited
+  (records until the whole reveal animates in + 2 s) and the output filename is
+  configurable. Requires `ffmpeg`.
+- **Manual linking** — Ctrl-drag node→node to connect; click an edge + Delete to
+  disconnect; Link/Unlink for two selected nodes; editable edge labels.
+- **Undo/Redo** (Ctrl+Z/Y), **notes & flags** on nodes, **minimap**, **CSV
+  import**, **Maltego `.mtgx` export**, **spawn + edge-draw animations**.
+- **Node styles** (Flat / Material You / Neon / Outline) and **cluster colouring**.
+- **Graph analytics**: degree **and betweenness** centrality, components, density.
+- Transforms for **every** entity type (80 total): BTC, MAC, geocoding, file
+  hashing, **Shodan InternetDB** (free), **ip-api**, OTX, urlscan, CIRCL, NVD…
+
+### Fixed
+- Right-click context menu (Run-all / Delete) not registering.
+- Video cutting off half-way on large graphs; node-style rendering glitches.
+- Map zoom jerkiness (now smooth fractional zoom).
+
+---
+
 ## [1.0.0-beta.2] — Beta 2 — 2026-06-14
 
 The "make it a real Maltego competitor" release.
 
 ### Added
+- **GEOINT mode** — a standalone geospatial workspace with a live OpenStreetMap
+  slippy map (pan/zoom/markers), **EXIF GPS extraction** from images, reverse
+  geocoding, distance measuring, and Google Maps/Earth/Street View links.
+- **Spawn animation** — nodes pop in (ease-out-back) when created.
+- **Manual linking** — Ctrl-drag node→node to connect; click an edge + Delete to
+  disconnect; Link/Unlink buttons for two selected nodes; editable edge labels.
+- **Undo/Redo** (Ctrl+Z/Y), **notes & flags** on nodes, **minimap**,
+  **CSV import**, **Maltego `.mtgx` export**, and keyboard shortcuts.
 - **Maltego `.mtgx` import** — open Maltego graphs (ZIP/GraphML); entity types
   are mapped onto parasite kinds.
 - **Transforms for every entity type** — BTC (balance via blockchain.info), MAC

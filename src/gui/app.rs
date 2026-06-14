@@ -125,6 +125,7 @@ pub struct GraphPanel {
     new_kind:  Kind,
     new_value: String,
     save_path: String,
+    video_path: String,
     filter:    String,
     menu:      Option<(u64, egui::Pos2)>,
     machine:   Option<MachineRun>,
@@ -133,10 +134,16 @@ pub struct GraphPanel {
     show_table: bool,
     show_add: bool,
     show_analytics: bool,
+    show_minimap: bool,
+    undo: Vec<super::model::GraphData>,
+    redo: Vec<super::model::GraphData>,
+    recording: Option<RecState>,
 }
 
 #[derive(Clone, Copy)]
 enum ExportFmt { Png, Pdf }
+
+struct RecState { dir: std::path::PathBuf, idx: u32, start_time: f64, end_time: f64, out: String }
 
 impl GraphPanel {
     pub fn new() -> Self {
@@ -159,6 +166,7 @@ impl GraphPanel {
             new_kind: Kind::Domain,
             new_value: String::new(),
             save_path: "graph.json".into(),
+            video_path: "graph.mp4".into(),
             filter: String::new(),
             menu: None,
             machine: None,
@@ -167,8 +175,17 @@ impl GraphPanel {
             show_table: false,
             show_add: false,
             show_analytics: false,
+            show_minimap: true,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            recording: None,
         };
         s.log("◦  add an entity from the palette, then double-click it to run a transform");
+        // debug/demo: open a graph file at startup if PARASITE_OPEN is set
+        if let Ok(path) = std::env::var("PARASITE_OPEN") {
+            s.save_path = path;
+            s.load_graph();
+        }
         s
     }
 
@@ -184,6 +201,7 @@ impl GraphPanel {
 
     /// Place a new entity in the centre of the current view.
     fn add_entity(&mut self, kind: Kind, value: String) -> u64 {
+        self.record();
         let pos = self.view_center_world();
         let jitter = self.graph.entities.len() as f32;
         let pos = Pos2::new(pos.x + (jitter * 17.0) % 60.0 - 30.0,
@@ -377,6 +395,7 @@ impl GraphPanel {
     }
 
     fn apply_outcome(&mut self, source_id: u64, _transform: &str, outcome: transforms::Outcome) {
+        if !outcome.items.is_empty() || !outcome.props.is_empty() { self.record(); }
         for line in outcome.log { self.log(line); }
         if !outcome.props.is_empty() {
             self.graph.merge_props(source_id, &outcome.props);
@@ -403,8 +422,34 @@ impl GraphPanel {
         }
     }
 
+    /// Snapshot the graph for undo. Call before any structural mutation.
+    fn record(&mut self) {
+        self.undo.push(self.graph.to_data());
+        if self.undo.len() > 80 { self.undo.remove(0); }
+        self.redo.clear();
+    }
+
+    fn undo(&mut self) {
+        if let Some(prev) = self.undo.pop() {
+            self.redo.push(self.graph.to_data());
+            self.graph = Graph::from_data(prev);
+            self.sel.clear();
+            self.log("↶  undo");
+        }
+    }
+
+    fn redo(&mut self) {
+        if let Some(next) = self.redo.pop() {
+            self.undo.push(self.graph.to_data());
+            self.graph = Graph::from_data(next);
+            self.sel.clear();
+            self.log("↷  redo");
+        }
+    }
+
     fn delete_selected(&mut self) {
         if self.sel.set.is_empty() { return; }
+        self.record();
         let ids: Vec<u64> = self.sel.set.iter().copied().collect();
         for id in &ids { self.graph.remove(*id); }
         let n = ids.len();
@@ -414,6 +459,14 @@ impl GraphPanel {
 
     fn save_graph(&mut self) {
         let path = self.save_path.trim().to_string();
+        // Maltego export
+        if path.to_lowercase().ends_with(".mtgx") {
+            match super::mtgx::export(&path, &self.graph) {
+                Ok(_)  => self.log(format!("✓  exported {} entities to Maltego → {path}", self.graph.entities.len())),
+                Err(e) => self.log(format!("✗  .mtgx export failed: {e}")),
+            }
+            return;
+        }
         match serde_json::to_string_pretty(&self.graph.to_data()) {
             Ok(json) => match std::fs::write(&path, json) {
                 Ok(_)  => self.log(format!("✓  saved {} entities → {path}", self.graph.entities.len())),
@@ -425,8 +478,15 @@ impl GraphPanel {
 
     fn load_graph(&mut self) {
         let path = self.save_path.trim().to_string();
+        let lower = path.to_lowercase();
+        // CSV batch import: "kind,value" or just values (kind guessed)
+        if lower.ends_with(".csv") || lower.ends_with(".txt") {
+            self.import_csv(&path);
+            return;
+        }
         // Maltego import
         if path.to_lowercase().ends_with(".mtgx") {
+            self.record();
             match super::mtgx::import(&path) {
                 Ok(g) => {
                     self.graph = g;
@@ -442,6 +502,7 @@ impl GraphPanel {
         match std::fs::read_to_string(&path) {
             Ok(s) => match serde_json::from_str(&s) {
                 Ok(data) => {
+                    self.record();
                     self.graph = Graph::from_data(data);
                     self.sel.clear();
                     self.needs_fit = true;
@@ -453,6 +514,32 @@ impl GraphPanel {
         }
     }
 
+    /// Import a CSV/TXT file: each line is `kind,value` or just a value (kind is
+    /// guessed). Adds entities (and links them to nothing).
+    fn import_csv(&mut self, path: &str) {
+        let text = match std::fs::read_to_string(path) {
+            Ok(t) => t, Err(e) => { self.log(format!("✗  read failed: {e}")); return; }
+        };
+        self.record();
+        let mut n = 0;
+        let mut col = 0.0f32;
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') { continue; }
+            let (kind, value) = match line.split_once(',') {
+                Some((k, v)) => (kind_from_name(k.trim()).unwrap_or_else(|| guess_kind(v.trim())), v.trim().to_string()),
+                None => (guess_kind(line), line.to_string()),
+            };
+            let pos = Pos2::new((n as f32 % 10.0) * 140.0 - 630.0, (n as f32 / 10.0).floor() * 120.0 - 300.0);
+            self.graph.add(kind, value, pos);
+            n += 1; col += 1.0;
+        }
+        let _ = col;
+        self.sel.clear();
+        self.needs_fit = true;
+        self.log(format!("✓  imported {n} entities from CSV ← {path}"));
+    }
+
     // ── Rendering ──────────────────────────────────────────────────────────────
 
     pub fn ui(&mut self, ctx: &egui::Context) {
@@ -460,16 +547,30 @@ impl GraphPanel {
         self.machine_tick();
         if self.machine.is_some() { ctx.request_repaint(); }
 
-        // Pick up a requested screenshot once the backend delivers it.
-        if self.pending_shot.is_some() {
+        // stop a video once the reveal animation + tail is over (or a safety cap)
+        if let Some(rec) = &self.recording {
+            let now = ctx.input(|i| i.time);
+            if now >= rec.end_time || rec.idx > 3000 { self.finish_video(); }
+        }
+
+        // Pick up a requested screenshot (single export OR a video frame).
+        if self.pending_shot.is_some() || self.recording.is_some() {
             let shot = ctx.input(|i| i.events.iter().find_map(|e| match e {
                 egui::Event::Screenshot { image, .. } => Some(image.clone()),
                 _ => None,
             }));
             if let Some(img) = shot {
-                if let Some(fmt) = self.pending_shot.take() {
-                    self.save_shot(img, fmt, ctx.pixels_per_point());
+                let ppp = ctx.pixels_per_point();
+                if self.recording.is_some() {
+                    self.save_frame(img, ppp);
+                } else if let Some(fmt) = self.pending_shot.take() {
+                    self.save_shot(img, fmt, ppp);
                 }
+            }
+            // keep requesting frames while recording
+            if self.recording.is_some() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot);
+                ctx.request_repaint();
             }
         }
 
@@ -477,12 +578,32 @@ impl GraphPanel {
         // (otherwise Backspace/Delete would nuke the selected node).
         if !ctx.wants_keyboard_input() {
             if ctx.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace)) {
-                if !self.sel.set.is_empty() { self.delete_selected(); }
+                if let Some(ei) = self.sel.edge.take() {
+                    if ei < self.graph.edges.len() { self.record(); self.graph.edges.remove(ei); self.log("⊘  link removed"); }
+                } else if !self.sel.set.is_empty() {
+                    self.delete_selected();
+                }
             }
             if ctx.input(|i| i.key_pressed(egui::Key::F)) { self.needs_fit = true; }
-            if ctx.input(|i| i.key_pressed(egui::Key::L)) {
+            if ctx.input(|i| i.key_pressed(egui::Key::L) && !i.modifiers.ctrl) {
+                self.record();
                 canvas::auto_layout(&mut self.graph);
                 self.needs_fit = true;
+            }
+            // undo / redo
+            if ctx.input(|i| i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::Z)) { self.undo(); }
+            if ctx.input(|i| (i.modifiers.command && i.key_pressed(egui::Key::Y))
+                || (i.modifiers.command && i.modifiers.shift && i.key_pressed(egui::Key::Z))) { self.redo(); }
+            // run default transform on the selected node
+            if ctx.input(|i| i.key_pressed(egui::Key::Enter)) {
+                if let Some(id) = self.sel.primary { self.run_default(id); }
+            }
+            // select all
+            if ctx.input(|i| i.modifiers.command && i.key_pressed(egui::Key::A)) {
+                let ids: Vec<u64> = self.graph.entities.keys().copied().collect();
+                self.sel.edge = None;
+                self.sel.set = ids.iter().copied().collect();
+                self.sel.primary = ids.first().copied();
             }
         }
 
@@ -730,26 +851,56 @@ impl GraphPanel {
 
                     let mut did_layout = false;
                     ui.menu_button(RichText::new("⊹ Layout ▾").color(text_sec()).size(12.0), |ui| {
-                        if ui.button("Force-directed").clicked() { canvas::auto_layout(&mut self.graph); did_layout = true; ui.close_menu(); }
-                        if ui.button("Circle").clicked()         { canvas::circle_layout(&mut self.graph); did_layout = true; ui.close_menu(); }
-                        if ui.button("Grid").clicked()           { canvas::grid_layout(&mut self.graph); did_layout = true; ui.close_menu(); }
-                        if ui.button("Tree / hierarchical").clicked() { canvas::tree_layout(&mut self.graph); did_layout = true; ui.close_menu(); }
-                        if ui.button("Radial / concentric").clicked() { canvas::radial_layout(&mut self.graph); did_layout = true; ui.close_menu(); }
+                        if ui.button("Force-directed").clicked() { self.record(); canvas::auto_layout(&mut self.graph); did_layout = true; ui.close_menu(); }
+                        if ui.button("Circle").clicked()         { self.record(); canvas::circle_layout(&mut self.graph); did_layout = true; ui.close_menu(); }
+                        if ui.button("Grid").clicked()           { self.record(); canvas::grid_layout(&mut self.graph); did_layout = true; ui.close_menu(); }
+                        if ui.button("Tree / hierarchical").clicked() { self.record(); canvas::tree_layout(&mut self.graph); did_layout = true; ui.close_menu(); }
+                        if ui.button("Radial / concentric").clicked() { self.record(); canvas::radial_layout(&mut self.graph); did_layout = true; ui.close_menu(); }
                     });
                     if did_layout { self.needs_fit = true; }
                     if toolbtn(ui, "⤢ Fit").clicked() {
                         self.needs_fit = true;
                     }
+                    ui.add_enabled_ui(!self.undo.is_empty(), |ui| {
+                        if toolbtn(ui, "↶").on_hover_text("Undo (Ctrl+Z)").clicked() { self.undo(); }
+                    });
+                    ui.add_enabled_ui(!self.redo.is_empty(), |ui| {
+                        if toolbtn(ui, "↷").on_hover_text("Redo (Ctrl+Y)").clicked() { self.redo(); }
+                    });
                     if toolbtn(ui, "▤ Table").clicked() {
                         self.show_table = !self.show_table;
                     }
                     if toolbtn(ui, "∑ Analytics").clicked() {
                         self.show_analytics = !self.show_analytics;
                     }
+                    if toolbtn(ui, "🗺 Minimap").clicked() {
+                        self.show_minimap = !self.show_minimap;
+                    }
                     if toolbtn(ui, "✗ Clear").clicked() {
+                        self.record();
                         self.graph.clear();
                         self.sel.clear();
                         self.log("⊘  graph cleared");
+                    }
+
+                    // Link / unlink the two selected nodes (alt to Ctrl-drag).
+                    if self.sel.set.len() == 2 {
+                        let ids: Vec<u64> = self.sel.set.iter().copied().collect();
+                        let (a, b) = (ids[0], ids[1]);
+                        let linked = self.graph.edges.iter().any(|e|
+                            (e.from == a && e.to == b) || (e.from == b && e.to == a));
+                        if !linked {
+                            if toolbtn(ui, "🔗 Link").clicked() {
+                                self.record();
+                                self.graph.link(a, b, "linked");
+                                self.log("✓  linked");
+                            }
+                        } else if toolbtn(ui, "✂ Unlink").clicked() {
+                            self.record();
+                            self.graph.edges.retain(|e|
+                                !((e.from == a && e.to == b) || (e.from == b && e.to == a)));
+                            self.log("⊘  unlinked");
+                        }
                     }
 
                     ui.add_space(8.0);
@@ -761,6 +912,15 @@ impl GraphPanel {
                     if toolbtn(ui, "⇩ CSV").clicked()  { self.export_csv(); }
                     if toolbtn(ui, "⛶ PNG").clicked()  { self.request_shot(ctx, ExportFmt::Png); }
                     if toolbtn(ui, "⛶ PDF").clicked()  { self.request_shot(ctx, ExportFmt::Pdf); }
+                    if self.recording.is_some() {
+                        ui.label(RichText::new("● REC").color(c_err()).strong().size(12.0));
+                        if toolbtn(ui, "■ stop").clicked() { self.finish_video(); }
+                    } else {
+                        if toolbtn(ui, "🎬 Video").clicked() { self.start_video(ctx); }
+                        ui.add(TextEdit::singleline(&mut self.video_path)
+                            .desired_width(96.0).font(FontId::new(12.0, FontFamily::Monospace))
+                            .text_color(text_sec()));
+                    }
                     ui.add(TextEdit::singleline(&mut self.save_path)
                         .desired_width(120.0)
                         .font(FontId::new(12.0, FontFamily::Monospace))
@@ -916,9 +1076,38 @@ impl GraphPanel {
             .show(ctx, |ui| {
                 let Some(id) = self.sel.primary else {
                     egui::Frame::none().inner_margin(Margin::symmetric(16.0, 16.0)).show(ui, |ui| {
+                        if let Some(ei) = self.sel.edge {
+                            if self.graph.edges.get(ei).is_some() {
+                                ui.label(RichText::new("◗ Link selected").color(text_pri()).strong().size(13.0));
+                                ui.add_space(6.0);
+                                ui.label(RichText::new("LABEL").color(text_mut()).size(10.0).strong());
+                                ui.add_space(2.0);
+                                let mut lbl = self.graph.edges[ei].label.clone();
+                                if ui.add(TextEdit::singleline(&mut lbl).desired_width(f32::INFINITY)
+                                    .hint_text("link label")).changed()
+                                {
+                                    self.graph.edges[ei].label = lbl;
+                                }
+                                ui.add_space(8.0);
+                                if ui.add(egui::Button::new(RichText::new("⊘  Delete link").color(c_err()).size(12.0))
+                                    .fill(Color32::TRANSPARENT).stroke(Stroke::new(1.0, border()))
+                                    .rounding(Rounding::same(4.0))).clicked()
+                                {
+                                    self.record();
+                                    self.graph.edges.remove(ei);
+                                    self.sel.edge = None;
+                                    self.log("⊘  link removed");
+                                }
+                                ui.add_space(4.0);
+                                ui.label(RichText::new("(or press Delete)").color(text_mut()).size(11.0));
+                                return;
+                            }
+                        }
                         ui.label(RichText::new("No entity selected").color(text_mut()).italics().size(12.5));
                         ui.add_space(6.0);
-                        ui.label(RichText::new("Click a node to inspect it and run transforms.")
+                        ui.label(RichText::new("Click a node to inspect it & run transforms.\n\
+                                                Ctrl-drag from a node to another to link them.\n\
+                                                Click a link, then Delete, to remove it.")
                             .color(text_mut()).size(12.0));
                     });
                     return;
@@ -957,6 +1146,35 @@ impl GraphPanel {
                             let url = if lo.starts_with("http") { value.clone() } else { format!("https://{value}") };
                             open_url(&url);
                         }
+                    }
+                });
+
+                // Flags + note
+                egui::Frame::none().inner_margin(Margin::symmetric(16.0, 8.0)).show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("FLAG").color(text_mut()).size(10.0).strong());
+                        ui.add_space(6.0);
+                        let cur = self.graph.entities.get(&id).map(|e| e.flag).unwrap_or(0);
+                        for (f, label, col) in [(0u8, "none", text_sec()),
+                            (1, "⚑ important", c_err()), (2, "✓ verified", c_ok()), (3, "◎ target", c_warn())] {
+                            let active = cur == f;
+                            if ui.add(egui::Button::new(RichText::new(label).color(if active { Color32::WHITE } else { col }).size(11.0))
+                                .fill(if active { col } else { Color32::TRANSPARENT })
+                                .stroke(Stroke::new(1.0, border())).rounding(Rounding::same(4.0))).clicked()
+                            {
+                                self.record();
+                                if let Some(e) = self.graph.entities.get_mut(&id) { e.flag = f; }
+                            }
+                        }
+                    });
+                    ui.add_space(6.0);
+                    ui.label(RichText::new("NOTE").color(text_mut()).size(10.0).strong());
+                    ui.add_space(2.0);
+                    let mut note = self.graph.entities.get(&id).map(|e| e.note.clone()).unwrap_or_default();
+                    if ui.add(TextEdit::multiline(&mut note).desired_width(f32::INFINITY).desired_rows(2)
+                        .hint_text("free-text note…")).changed()
+                    {
+                        if let Some(e) = self.graph.entities.get_mut(&id) { e.note = note; }
                     }
                 });
 
@@ -1140,6 +1358,32 @@ impl GraphPanel {
                 if let Some(ctxt) = action.context {
                     self.menu = Some(ctxt);
                 }
+                if let Some((a, b)) = action.new_link {
+                    let before = self.graph.edges.len();
+                    self.record();
+                    self.graph.link(a, b, "linked");
+                    if self.graph.edges.len() > before { self.log("✓  linked"); } else { self.undo.pop(); }
+                }
+                if self.show_minimap && self.recording.is_none() {
+                    canvas::draw_minimap(ui.painter(), &self.graph, &self.view, self.canvas_rect);
+                }
+                // theme-adaptive video watermark (baked into the recorded frames)
+                if self.recording.is_some() {
+                    let r = self.canvas_rect;
+                    let pp = ui.painter();
+                    // subtle themed backing panel
+                    let panel = egui::Rect::from_min_size(
+                        r.left_bottom() + egui::Vec2::new(14.0, -68.0), egui::Vec2::new(176.0, 54.0));
+                    let bp = bg_panel();
+                    pp.rect_filled(panel, Rounding::same(8.0),
+                        Color32::from_rgba_unmultiplied(bp.r(), bp.g(), bp.b(), 200));
+                    pp.rect_stroke(panel, Rounding::same(8.0), Stroke::new(1.0, accent_dark()));
+                    super::logo::paint(pp, panel.left_center() + egui::Vec2::new(24.0, 0.0), 18.0);
+                    pp.text(panel.left_top() + egui::Vec2::new(48.0, 12.0), egui::Align2::LEFT_TOP,
+                        "parasite", FontId::new(20.0, FontFamily::Proportional), accent());
+                    pp.text(panel.left_top() + egui::Vec2::new(48.0, 34.0), egui::Align2::LEFT_TOP,
+                        "OSINT graph", FontId::new(11.5, FontFamily::Proportional), text_sec());
+                }
             });
     }
 
@@ -1230,8 +1474,8 @@ impl GraphPanel {
         self.log("◦  capturing canvas…");
     }
 
-    /// Crop the framebuffer screenshot to the canvas and save it.
-    fn save_shot(&mut self, img: std::sync::Arc<egui::ColorImage>, fmt: ExportFmt, ppp: f32) {
+    /// Crop the framebuffer screenshot to the canvas → (rgba, w, h).
+    fn crop_canvas(&self, img: &egui::ColorImage, ppp: f32) -> Option<(Vec<u8>, u32, u32)> {
         let [fw, fh] = img.size;
         let r = self.canvas_rect;
         let x0 = ((r.min.x * ppp).floor() as usize).min(fw);
@@ -1239,8 +1483,7 @@ impl GraphPanel {
         let x1 = ((r.max.x * ppp).ceil() as usize).min(fw);
         let y1 = ((r.max.y * ppp).ceil() as usize).min(fh);
         let (cw, ch) = (x1.saturating_sub(x0), y1.saturating_sub(y0));
-        if cw == 0 || ch == 0 { self.log("✗  empty capture"); return; }
-
+        if cw == 0 || ch == 0 { return None; }
         let mut rgba = Vec::with_capacity(cw * ch * 4);
         for y in y0..y1 {
             for x in x0..x1 {
@@ -1248,7 +1491,11 @@ impl GraphPanel {
                 rgba.extend_from_slice(&[px.r(), px.g(), px.b(), 255]);
             }
         }
-        let (cw, ch) = (cw as u32, ch as u32);
+        Some((rgba, cw as u32, ch as u32))
+    }
+
+    fn save_shot(&mut self, img: std::sync::Arc<egui::ColorImage>, fmt: ExportFmt, ppp: f32) {
+        let Some((rgba, cw, ch)) = self.crop_canvas(&img, ppp) else { self.log("✗  empty capture"); return };
         let res = match fmt {
             ExportFmt::Png => super::export::save_png("graph.png", &rgba, cw, ch).map(|_| "graph.png"),
             ExportFmt::Pdf => super::export::save_pdf("graph.pdf", &rgba, cw, ch).map(|_| "graph.pdf"),
@@ -1257,6 +1504,65 @@ impl GraphPanel {
             Ok(p)  => self.log(format!("✓  exported {p} ({cw}×{ch})")),
             Err(e) => self.log(format!("✗  export failed: {e}")),
         }
+    }
+
+    /// Start recording an animated video of the graph (staggered reveal + logo).
+    /// Records until every node's spawn animation has finished, then 2 more
+    /// seconds — so big graphs are never cut off half-way.
+    fn start_video(&mut self, ctx: &egui::Context) {
+        if self.recording.is_some() { return; }
+        if self.graph.entities.is_empty() { self.log("✗  add some entities first"); return; }
+        let dir = std::env::temp_dir().join("parasite_frames");
+        let _ = std::fs::remove_dir_all(&dir);
+        if std::fs::create_dir_all(&dir).is_err() { self.log("✗  cannot create temp dir"); return; }
+
+        // staggered reveal: nodes pop in one after another
+        let now = ctx.input(|i| i.time);
+        let stagger = 0.07;
+        let mut ids: Vec<u64> = self.graph.entities.keys().copied().collect();
+        ids.sort_unstable();
+        let n = ids.len();
+        for (i, id) in ids.iter().enumerate() {
+            if let Some(e) = self.graph.entities.get_mut(id) { e.anim_start = Some(now + 0.3 + i as f64 * stagger); }
+        }
+        // last node finishes at: now + 0.3 + (n-1)*stagger + spawn_dur(0.45); + 2s tail
+        let end_time = now + 0.3 + (n.saturating_sub(1) as f64) * stagger + 0.45 + 2.0;
+
+        let mut out = self.video_path.trim().to_string();
+        if out.is_empty() { out = "graph.mp4".into(); }
+        if !out.to_lowercase().ends_with(".mp4") { out.push_str(".mp4"); }
+
+        self.needs_fit = true;
+        self.recording = Some(RecState { dir, idx: 0, start_time: now, end_time, out });
+        self.log(format!("🎬  recording {} ({:.0}s)…", self.recording.as_ref().unwrap().out, end_time - now));
+    }
+
+    fn save_frame(&mut self, img: std::sync::Arc<egui::ColorImage>, ppp: f32) {
+        let Some((rgba, w, h)) = self.crop_canvas(&img, ppp) else { return };
+        let (dir, idx) = match &self.recording { Some(r) => (r.dir.clone(), r.idx), None => return };
+        let path = dir.join(format!("f{idx:05}.png"));
+        let _ = super::export::save_png(path.to_str().unwrap_or("frame.png"), &rgba, w, h);
+        if let Some(r) = self.recording.as_mut() { r.idx += 1; }
+    }
+
+    fn finish_video(&mut self) {
+        let Some(rec) = self.recording.take() else { return };
+        let pattern = rec.dir.join("f%05d.png");
+        if rec.idx == 0 { self.log("✗  no frames captured"); return; }
+        // play back at the real capture rate so the duration matches the reveal
+        let dur = (rec.end_time - rec.start_time).max(0.5);
+        let fps = ((rec.idx as f64 / dur).clamp(2.0, 60.0) * 100.0).round() / 100.0;
+        let status = std::process::Command::new("ffmpeg")
+            .args(["-y", "-framerate", &format!("{fps}"), "-i", pattern.to_str().unwrap_or(""),
+                   "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+                   "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "20", "-r", "30", &rec.out])
+            .status();
+        match status {
+            Ok(s) if s.success() => self.log(format!("✓  saved {} ({} frames)", rec.out, rec.idx)),
+            Ok(_) => self.log("✗  ffmpeg failed to encode"),
+            Err(_) => self.log("✗  ffmpeg not installed — `sudo pacman -S ffmpeg`"),
+        }
+        let _ = std::fs::remove_dir_all(&rec.dir);
     }
 
     fn export_csv(&mut self) {
@@ -1317,6 +1623,27 @@ fn open_url(url: &str) {
     let _ = std::process::Command::new("open").arg(&url).spawn();
     #[cfg(target_os = "windows")]
     let _ = std::process::Command::new("cmd").args(["/C", "start", "", &url]).spawn();
+}
+
+fn kind_from_name(name: &str) -> Option<Kind> {
+    let n = name.to_lowercase();
+    Kind::ALL.into_iter().find(|k| k.label().to_lowercase() == n
+        || format!("{:?}", k).to_lowercase() == n)
+}
+
+/// Guess an entity kind from a raw value.
+fn guess_kind(v: &str) -> Kind {
+    let v = v.trim();
+    if v.contains('@') && v.contains('.') { return Kind::Email; }
+    if v.starts_with("http://") || v.starts_with("https://") { return Kind::Website; }
+    if v.parse::<std::net::Ipv4Addr>().is_ok() { return Kind::Ip; }
+    if v.to_uppercase().starts_with("AS") && v[2..].chars().all(|c| c.is_ascii_digit()) && v.len() > 2 { return Kind::Asn; }
+    if v.starts_with('+') || (v.chars().filter(|c| c.is_ascii_digit()).count() >= 8
+        && v.chars().all(|c| c.is_ascii_digit() || " +-()".contains(c))) { return Kind::Phone; }
+    let hexlen = v.chars().filter(|c| c.is_ascii_hexdigit()).count();
+    if hexlen == v.len() && matches!(v.len(), 32 | 40 | 64 | 128) { return Kind::Hash; }
+    if v.contains('.') && !v.contains(' ') && v.split('.').count() >= 2 { return Kind::Domain; }
+    Kind::Phrase
 }
 
 fn truncate(s: &str, n: usize) -> String {
