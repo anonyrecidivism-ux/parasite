@@ -9,19 +9,21 @@ use serde::{Deserialize, Serialize};
 use std::cell::Cell;
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum NodeShape { Circle, Square, Diamond, Triangle, Pentagon, Hexagon, Octagon, ByType }
+pub enum NodeShape { Circle, Square, Diamond, Triangle, Pentagon, Hexagon, Heptagon, Octagon, Star, Plus, ByType }
 
 impl NodeShape {
-    pub const ALL: [NodeShape; 8] = [
+    pub const ALL: [NodeShape; 11] = [
         NodeShape::Circle, NodeShape::Square, NodeShape::Diamond, NodeShape::Triangle,
-        NodeShape::Pentagon, NodeShape::Hexagon, NodeShape::Octagon, NodeShape::ByType,
+        NodeShape::Pentagon, NodeShape::Hexagon, NodeShape::Heptagon, NodeShape::Octagon,
+        NodeShape::Star, NodeShape::Plus, NodeShape::ByType,
     ];
     pub fn label(self) -> &'static str {
         match self {
             NodeShape::Circle=>"Circle", NodeShape::Square=>"Square",
             NodeShape::Diamond=>"Diamond", NodeShape::Triangle=>"Triangle",
             NodeShape::Pentagon=>"Pentagon", NodeShape::Hexagon=>"Hexagon",
-            NodeShape::Octagon=>"Octagon", NodeShape::ByType=>"By type",
+            NodeShape::Heptagon=>"Heptagon", NodeShape::Octagon=>"Octagon",
+            NodeShape::Star=>"Star", NodeShape::Plus=>"Plus", NodeShape::ByType=>"By type",
         }
     }
 }
@@ -122,6 +124,7 @@ const fn rgb(r: u8, g: u8, b: u8) -> Color32 { Color32::from_rgb(r, g, b) }
 
 /// All built-in themes, in display order. `(name, palette)`.
 pub const THEMES: &[(&str, fn() -> Palette)] = &[
+    ("Parasite",  parasite),
     ("Anthropic", anthropic),
     ("Midnight",  midnight),
     ("Matrix",    matrix),
@@ -138,6 +141,20 @@ pub const THEMES: &[(&str, fn() -> Palette)] = &[
 
 pub fn theme_by_name(name: &str) -> Palette {
     THEMES.iter().find(|(n, _)| *n == name).map(|(_, f)| f()).unwrap_or_else(anthropic)
+}
+
+/// The official parasite theme — deep warm charcoal with the coral brand accent.
+pub fn parasite() -> Palette {
+    Palette {
+        dark: true,
+        bg_app: rgb(17,15,14), bg_panel: rgb(25,22,20), bg_sidebar: rgb(13,11,10),
+        bg_canvas: rgb(15,13,12), bg_item_sel: rgb(44,33,28), bg_item_hov: rgb(31,26,23),
+        bg_input: rgb(29,25,22), bg_output: rgb(11,10,9),
+        accent: rgb(232,122,84), accent_dark: rgb(150,73,49), accent_hov: rgb(244,148,114),
+        text_pri: rgb(243,237,229), text_sec: rgb(166,152,139), text_mut: rgb(99,88,80),
+        border: rgb(42,36,32), grid: rgb(27,23,20),
+        c_ok: rgb(108,178,122), c_err: rgb(224,98,86), c_warn: rgb(226,168,74), c_info: rgb(122,166,214),
+    }
 }
 
 pub fn anthropic() -> Palette {
@@ -302,6 +319,9 @@ thread_local! {
 }
 
 pub fn current() -> Palette { CUR.with(|c| c.get()) }
+
+/// `#rrggbb` for a colour — used to theme the external ParasiteGoogle browser.
+pub fn hex(c: Color32) -> String { format!("#{:02x}{:02x}{:02x}", c.r(), c.g(), c.b()) }
 pub fn set_palette(p: Palette) { CUR.with(|c| c.set(p)); }
 pub fn config() -> UiConfig { CONF.with(|c| c.get()) }
 pub fn set_config(c: UiConfig) { CONF.with(|cell| cell.set(c)); }

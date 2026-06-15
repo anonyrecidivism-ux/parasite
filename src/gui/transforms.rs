@@ -11,7 +11,6 @@ use url::Url;
 
 use super::keys;
 use super::model::Kind;
-use super::sherlock;
 
 /// A transform the user can run against an entity of `applies` kind.
 #[derive(Clone, Copy)]
@@ -84,6 +83,20 @@ pub const TRANSFORMS: &[TransformDef] = &[
                    desc: "archived URLs — runs the waybackurls tool" },
     TransformDef { id: "dom_harvester", name: "theHarvester (CLI)", applies: Kind::Domain,
                    desc: "emails & hosts — runs the theHarvester tool" },
+    TransformDef { id: "dom_rapiddns", name: "Subdomains (RapidDNS)", applies: Kind::Domain,
+                   desc: "subdomains from rapiddns.io passive DNS" },
+    TransformDef { id: "dom_rdap",     name: "RDAP (registration)",applies: Kind::Domain,
+                   desc: "registrar, status & nameservers via rdap.org (no key)" },
+    TransformDef { id: "dom_spf",      name: "SPF Includes",       applies: Kind::Domain,
+                   desc: "parse the SPF record into included sender domains/IPs" },
+    TransformDef { id: "dom_dmarc",    name: "DMARC Policy",       applies: Kind::Domain,
+                   desc: "fetch & parse the _dmarc policy record" },
+    TransformDef { id: "dom_assetfinder", name: "assetfinder (CLI)", applies: Kind::Domain,
+                   desc: "subdomains — runs tomnomnom/assetfinder" },
+    TransformDef { id: "dom_amass",    name: "amass passive (CLI)",applies: Kind::Domain,
+                   desc: "passive subdomain enum — runs OWASP amass" },
+    TransformDef { id: "dom_gau",      name: "gau URLs (CLI)",     applies: Kind::Domain,
+                   desc: "known URLs from CommonCrawl/Wayback — runs lc/gau" },
     TransformDef { id: "dom_pivots",   name: "Search Links",       applies: Kind::Domain,
                    desc: "Shodan, Censys, urlscan, SecurityTrails… (open in browser)" },
     // ── Website ───────────────────────────────────────────────────────────────
@@ -103,6 +116,10 @@ pub const TRANSFORMS: &[TransformDef] = &[
                    desc: "parse robots.txt for disallowed paths & sitemaps" },
     TransformDef { id: "web_headers",  name: "Security Headers",   applies: Kind::Website,
                    desc: "grade CSP / HSTS / X-Frame-Options etc." },
+    TransformDef { id: "web_httpx",    name: "httpx Probe (CLI)",  applies: Kind::Website,
+                   desc: "title, status, tech & CDN — runs projectdiscovery/httpx" },
+    TransformDef { id: "web_katana",   name: "katana Crawl (CLI)", applies: Kind::Website,
+                   desc: "crawl & collect endpoints — runs projectdiscovery/katana" },
     // ── Email ─────────────────────────────────────────────────────────────────
     TransformDef { id: "mail_domain",  name: "To Domain",          applies: Kind::Email,
                    desc: "the domain part of the address" },
@@ -122,14 +139,18 @@ pub const TRANSFORMS: &[TransformDef] = &[
     TransformDef { id: "person_pivots",name: "Search Links",       applies: Kind::Person,
                    desc: "Google, LinkedIn, Twitter, Pipl (open in browser)" },
     // ── Username ──────────────────────────────────────────────────────────────
-    TransformDef { id: "user_hunt",    name: "Hunt Accounts",      applies: Kind::Username,
-                   desc: "Sherlock-style search across 50 social networks" },
+    TransformDef { id: "user_hunt",    name: "Hunt Accounts (sherlock)", applies: Kind::Username,
+                   desc: "runs the real sherlock tool across 400+ sites" },
     TransformDef { id: "user_github",  name: "GitHub Profile",     applies: Kind::Username,
                    desc: "GitHub user: name, org, location, blog (free API)" },
-    TransformDef { id: "user_maigret", name: "maigret (CLI)",      applies: Kind::Username,
+    TransformDef { id: "user_maigret", name: "maigret (deep)",     applies: Kind::Username,
                    desc: "deep account search — runs the maigret tool" },
-    TransformDef { id: "user_sherlock", name: "sherlock (CLI)",    applies: Kind::Username,
-                   desc: "the original sherlock tool, if installed" },
+    TransformDef { id: "user_keybase", name: "Keybase Identity",   applies: Kind::Username,
+                   desc: "linked proofs (Twitter, GitHub, Reddit…) via Keybase" },
+    TransformDef { id: "user_gitlab",  name: "GitLab Profile",     applies: Kind::Username,
+                   desc: "public GitLab account & metadata" },
+    TransformDef { id: "user_hackernews", name: "Hacker News",     applies: Kind::Username,
+                   desc: "Hacker News karma, age & recent activity" },
     TransformDef { id: "user_pivots",  name: "Search Links",       applies: Kind::Username,
                    desc: "search engines & people-search (open in browser)" },
     // ── Social ────────────────────────────────────────────────────────────────
@@ -156,6 +177,10 @@ pub const TRANSFORMS: &[TransformDef] = &[
                    desc: "free: open ports, vulns (CVE), hostnames, tags" },
     TransformDef { id: "ip_ipapi",     name: "Geo + ASN (ip-api)", applies: Kind::Ip,
                    desc: "free city/country/ISP/ASN + coordinates" },
+    TransformDef { id: "ip_rdap",      name: "RDAP (netblock/org)",applies: Kind::Ip,
+                   desc: "owning org, netblock & abuse contact via rdap.org" },
+    TransformDef { id: "ip_bgpview",   name: "BGP / ASN (RIPEstat)",applies: Kind::Ip,
+                   desc: "announcing ASN, prefix & holder via RIPEstat (no key)" },
     TransformDef { id: "ip_website",   name: "To Website",         applies: Kind::Ip,
                    desc: "build http:// website for this IP" },
     // ── ASN ───────────────────────────────────────────────────────────────────
@@ -174,12 +199,26 @@ pub const TRANSFORMS: &[TransformDef] = &[
     TransformDef { id: "phone_format", name: "Normalize",          applies: Kind::Phone,
                    desc: "strip to E.164-ish digits and validate length" },
     TransformDef { id: "phone_pivots", name: "Search Links",       applies: Kind::Phone,
-                   desc: "Truecaller, sync.me, WhoCalld, Google (open in browser)" },
+                   desc: "Truecaller, sync.me, WhoCalld, NumLookup, Google (open in browser)" },
+    TransformDef { id: "phone_infoga", name: "PhoneInfoga (CLI)",  applies: Kind::Phone,
+                   desc: "carrier, line type, area — runs the phoneinfoga tool" },
     // ── BTC address ───────────────────────────────────────────────────────────
     TransformDef { id: "btc_info",     name: "Balance & Activity", applies: Kind::BtcAddress,
                    desc: "balance, tx count & total received (blockchain.info)" },
+    TransformDef { id: "btc_txs",      name: "Recent Transactions",applies: Kind::BtcAddress,
+                   desc: "latest transactions for this address (blockchain.info)" },
     TransformDef { id: "btc_pivots",   name: "Explorer Links",     applies: Kind::BtcAddress,
                    desc: "Blockchair, Blockchain.com, OXT (open in browser)" },
+    // ── ETH address ───────────────────────────────────────────────────────────
+    TransformDef { id: "eth_info",     name: "Balance & Activity", applies: Kind::EthAddress,
+                   desc: "ETH balance & tx count (Blockchair, free)" },
+    TransformDef { id: "eth_txs",      name: "Recent Transactions",applies: Kind::EthAddress,
+                   desc: "latest transactions (Blockchair)" },
+    TransformDef { id: "eth_pivots",   name: "Explorer Links",     applies: Kind::EthAddress,
+                   desc: "Etherscan, Blockchair, Etherscan-tokens (open in browser)" },
+    // ── Transaction ───────────────────────────────────────────────────────────
+    TransformDef { id: "tx_pivots",    name: "Explorer Links",     applies: Kind::Transaction,
+                   desc: "open the tx on Blockchair / Etherscan / Blockchain.com" },
     // ── MAC address ───────────────────────────────────────────────────────────
     TransformDef { id: "mac_vendor",   name: "Vendor Lookup",      applies: Kind::MacAddress,
                    desc: "OUI → hardware vendor (macvendors.com)" },
@@ -394,7 +433,7 @@ pub async fn run(id: &str, value: &str) -> Outcome {
                 o.item(Kind::Username, u, "alias");
             }
         }
-        "user_hunt"  => hunt_accounts(&v, &mut o).await,
+        "user_hunt"  => sherlock_run(&v, &mut o).await,
         "dom_wayback" => wayback(&v, &mut o).await,
         "dom_dork"   => dorks(&v, &mut o),
         "web_robots" => robots(&v, &mut o).await,
@@ -405,6 +444,12 @@ pub async fn run(id: &str, value: &str) -> Outcome {
         "phone_info" => phone_info(&v, &mut o),
         "phone_format" => phone_format(&v, &mut o),
         "phone_pivots" => pivots(&v, "phone", &mut o),
+        "phone_infoga" => phoneinfoga(&v, &mut o).await,
+        "btc_txs"   => btc_txs(&v, &mut o).await,
+        "eth_info"  => eth_info(&v, &mut o).await,
+        "eth_txs"   => eth_txs(&v, &mut o).await,
+        "eth_pivots" => pivots(&v, "eth", &mut o),
+        "tx_pivots"  => pivots(&v, "tx", &mut o),
         "org_domain" => org_domain(&v, &mut o),
         "org_dork"   => org_dork(&v, &mut o),
         "org_pivots" => pivots(&v, "org", &mut o),
@@ -450,13 +495,26 @@ pub async fn run(id: &str, value: &str) -> Outcome {
         "hash_circl" => circl_hash(&v, &mut o).await,
         "cve_nvd"    => nvd_cve(&v, &mut o).await,
         "hash_vt"    => virustotal_file(&v, &mut o).await,
+        "dom_rapiddns" => rapiddns(&v, &mut o).await,
+        "dom_rdap"   => rdap_domain(&v, &mut o).await,
+        "dom_spf"    => spf_record(&v, &mut o).await,
+        "dom_dmarc"  => dmarc_record(&v, &mut o).await,
+        "ip_rdap"    => rdap_ip(&v, &mut o).await,
+        "ip_bgpview" => bgpview_ip(&v, &mut o).await,
+        "user_keybase" => keybase(&v, &mut o).await,
+        "user_gitlab"  => gitlab_user(&v, &mut o).await,
+        "user_hackernews" => hackernews_user(&v, &mut o).await,
         // ── external GitHub CLI tools (optional) ──
         "email_holehe"  => holehe(&v, &mut o).await,
         "user_maigret"  => maigret(&v, &mut o).await,
         "dom_subfinder" => subfinder(&v, &mut o).await,
         "dom_harvester" => the_harvester(&v, &mut o).await,
-        "user_sherlock" => sherlock_cli(&v, &mut o).await,
         "dom_waybackurls" => waybackurls_cli(&v, &mut o).await,
+        "dom_assetfinder" => assetfinder(&v, &mut o).await,
+        "dom_amass"  => amass(&v, &mut o).await,
+        "dom_gau"    => gau(&v, &mut o).await,
+        "web_httpx"  => httpx(&v, &mut o).await,
+        "web_katana" => katana(&v, &mut o).await,
         other => o.log.push(format!("✗  unknown transform '{other}'")),
     }
 
@@ -891,51 +949,6 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-// ── Sherlock-style account hunt ────────────────────────────────────────────────
-async fn hunt_accounts(username: &str, o: &mut Outcome) {
-    use futures::stream::{self, StreamExt};
-    let username = username.trim().to_string();
-    if username.is_empty() || username.contains(char::is_whitespace) {
-        o.log.push("✗  give a single-token username".into());
-        return;
-    }
-    let sites = sherlock::sites();
-    o.log.push(format!("◦  hunting '{username}' across {} sites…", sites.len()));
-    // a browser-like UA so sites don't serve bots a misleading status/page
-    let c = reqwest::Client::builder()
-        .user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0 Safari/537.36")
-        .timeout(Duration::from_secs(15))
-        .danger_accept_invalid_certs(true)
-        .build()
-        .unwrap_or_else(|_| client());
-
-    let tasks = sites.into_iter().map(|site| {
-        let c = c.clone();
-        let username = username.clone();
-        async move {
-            let found = sherlock::check(&c, &site, &username).await;
-            (site.name.to_string(), found)
-        }
-    });
-    let results: Vec<(String, Option<String>)> = stream::iter(tasks)
-        .buffer_unordered(20)
-        .collect()
-        .await;
-
-    let mut found = 0usize;
-    for (name, url) in results {
-        if let Some(url) = url {
-            found += 1;
-            o.log.push(format!("✓  {name}: {url}"));
-            o.items.push(NewItem {
-                kind: Kind::Social, value: url, edge: name.to_lowercase(),
-                props: vec![("site".into(), name)],
-            });
-        }
-    }
-    o.log.push(format!("◦  {found} account(s) found"));
-}
-
 fn username_guesses(name: &str) -> Vec<String> {
     let parts: Vec<String> = name.split_whitespace()
         .map(|s| s.to_lowercase().chars().filter(|c| c.is_alphanumeric()).collect())
@@ -1145,7 +1158,26 @@ fn pivots(value: &str, kind: &str, o: &mut Outcome) {
             ("Truecaller",  format!("https://www.truecaller.com/search/global/{e}")),
             ("Sync.me",     format!("https://sync.me/search/?number={e}")),
             ("WhoCalld",    format!("https://whocalld.com/{e}")),
+            ("NumLookup",   format!("https://www.numlookup.com/results?phone={e}")),
+            ("Spokeo",      format!("https://www.spokeo.com/{e}")),
         ],
+        "eth" => vec![
+            ("Etherscan",   format!("https://etherscan.io/address/{e}")),
+            ("Blockchair",  format!("https://blockchair.com/ethereum/address/{e}")),
+            ("Tokens",      format!("https://etherscan.io/tokenholdings?a={e}")),
+            ("OXT/Arkham",  format!("https://platform.arkhamintelligence.com/explorer/address/{e}")),
+        ],
+        "tx" => {
+            // eth tx hashes are 0x + 64 hex; btc are 64 hex without 0x
+            let eth = v.starts_with("0x");
+            if eth {
+                vec![("Etherscan", format!("https://etherscan.io/tx/{e}")),
+                     ("Blockchair", format!("https://blockchair.com/ethereum/transaction/{e}"))]
+            } else {
+                vec![("Blockchair", format!("https://blockchair.com/bitcoin/transaction/{e}")),
+                     ("Blockchain.com", format!("https://www.blockchain.com/explorer/transactions/btc/{e}"))]
+            }
+        }
         "btc" => vec![
             ("Blockchair",     format!("https://blockchair.com/bitcoin/address/{e}")),
             ("Blockchain.com", format!("https://www.blockchain.com/explorer/addresses/btc/{e}")),
@@ -1259,6 +1291,84 @@ async fn btc_info(addr: &str, o: &mut Outcome) {
     o.props.push(("tx_count".into(), n_tx.to_string()));
     o.props.push(("total_received_btc".into(), format!("{:.8}", sat("total_received"))));
     o.item(Kind::Phrase, format!("{:.8} BTC ({n_tx} tx)", sat("final_balance")), "balance");
+}
+
+async fn btc_txs(addr: &str, o: &mut Outcome) {
+    let url = format!("https://blockchain.info/rawaddr/{}?limit=12", enc(addr.trim()));
+    let resp = match client().get(&url).send().await { Ok(r) => r, Err(e) => { o.log.push(format!("✗  {e}")); return; } };
+    let j: serde_json::Value = serde_json::from_str(&resp.text().await.unwrap_or_default()).unwrap_or_default();
+    let mut n = 0;
+    if let Some(txs) = j.get("txs").and_then(|v| v.as_array()) {
+        for t in txs {
+            if let Some(h) = t.get("hash").and_then(|v| v.as_str()) {
+                n += 1;
+                o.item(Kind::Transaction, h.to_string(), "tx");
+            }
+        }
+    }
+    o.log.push(format!("✓  {n} recent transaction(s)"));
+}
+
+// ── ETH via Ethplorer (free "freekey") + Blockscout ────────────────────────────
+async fn eth_info(addr: &str, o: &mut Outcome) {
+    let url = format!("https://api.ethplorer.io/getAddressInfo/{}?apiKey=freekey", enc(addr.trim()));
+    let resp = match client().get(&url).send().await { Ok(r) => r, Err(e) => { o.log.push(format!("✗  {e}")); return; } };
+    let j: serde_json::Value = serde_json::from_str(&resp.text().await.unwrap_or_default()).unwrap_or_default();
+    let eth = j.pointer("/ETH/balance").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    o.log.push(format!("✓  {eth:.6} ETH"));
+    o.props.push(("balance_eth".into(), format!("{eth:.6}")));
+    if let Some(txc) = j.get("countTxs").and_then(|v| v.as_u64()) { o.props.push(("tx_count".into(), txc.to_string())); }
+    o.item(Kind::Phrase, format!("{eth:.6} ETH"), "balance");
+    // ERC-20 tokens held
+    if let Some(tokens) = j.get("tokens").and_then(|v| v.as_array()) {
+        let mut n = 0;
+        for t in tokens {
+            if let Some(sym) = t.pointer("/tokenInfo/symbol").and_then(|v| v.as_str()) {
+                let name = t.pointer("/tokenInfo/name").and_then(|v| v.as_str()).unwrap_or(sym);
+                n += 1;
+                if n <= 15 { o.item(Kind::Phrase, format!("{name} ({sym})"), "holds token"); }
+            }
+        }
+        o.log.push(format!("◦  holds {n} ERC-20 token(s)"));
+    }
+}
+
+async fn eth_txs(addr: &str, o: &mut Outcome) {
+    let url = format!("https://eth.blockscout.com/api?module=account&action=txlist&address={}&page=1&offset=12&sort=desc", enc(addr.trim()));
+    let resp = match client().get(&url).send().await { Ok(r) => r, Err(e) => { o.log.push(format!("✗  {e}")); return; } };
+    let j: serde_json::Value = serde_json::from_str(&resp.text().await.unwrap_or_default()).unwrap_or_default();
+    let mut n = 0;
+    if let Some(arr) = j.get("result").and_then(|v| v.as_array()) {
+        for t in arr.iter().take(12) {
+            if let Some(h) = t.get("hash").and_then(|v| v.as_str()) { n += 1; o.item(Kind::Transaction, h.to_string(), "tx"); }
+        }
+    }
+    o.log.push(format!("✓  {n} recent transaction(s)"));
+}
+
+async fn phoneinfoga(phone: &str, o: &mut Outcome) {
+    let num = phone.trim();
+    o.log.push("◦  running phoneinfoga…".into());
+    let mut out = try_tool("phoneinfoga", &["scan", "-n", num]).await;
+    if out.is_none() { out = try_tool("python3", &["-m", "phoneinfoga", "scan", "-n", num]).await; }
+    let Some(out) = out else {
+        o.log.push("✗  phoneinfoga not found — see github.com/sundowndev/phoneinfoga".into());
+        return;
+    };
+    for line in out.lines() {
+        let l = line.trim();
+        if l.is_empty() { continue; }
+        for key in ["Carrier:", "Country:", "Local:", "Type:", "Format"] {
+            if let Some(rest) = l.strip_prefix(key) {
+                let val = rest.trim();
+                if !val.is_empty() {
+                    o.props.push((key.trim_end_matches(':').to_lowercase(), val.to_string()));
+                    o.log.push(format!("✓  {l}"));
+                }
+            }
+        }
+    }
+    o.log.push("◦  phoneinfoga done".into());
 }
 
 // ── MAC vendor (macvendors.com, free) ──────────────────────────────────────────
@@ -1789,15 +1899,27 @@ async fn maigret(username: &str, o: &mut Outcome) {
     o.log.push(format!("✓  maigret: {} profile(s)", seen.len()));
 }
 
-async fn sherlock_cli(username: &str, o: &mut Outcome) {
-    let Some(out) = run_tool("sherlock", &["--print-found", "--no-color", "--timeout", "10", username], o).await else { return };
+async fn sherlock_run(username: &str, o: &mut Outcome) {
+    let u = username.trim();
+    if u.is_empty() || u.contains(char::is_whitespace) { o.log.push("✗  give a single-token username".into()); return; }
+    o.log.push("◦  running sherlock…".into());
+    let args = ["--print-found", "--no-color", "--timeout", "10", u];
+    let mut out = try_tool("sherlock", &args).await;
+    if out.is_none() {
+        let pargs = ["-m", "sherlock", "--print-found", "--no-color", "--timeout", "10", u];
+        out = try_tool("python3", &pargs).await;
+    }
+    let Some(out) = out else {
+        o.log.push("✗  sherlock not found — install with: pipx install sherlock-project".into());
+        return;
+    };
     let re = Regex::new(r"https?://[^\s]+").unwrap();
     let mut seen: Vec<String> = Vec::new();
     for line in out.lines() {
         if line.contains("[+]") {
             if let Some(m) = re.find(line) {
-                let u = m.as_str().to_string();
-                if !seen.contains(&u) { seen.push(u.clone()); o.item(Kind::Social, u, "sherlock"); }
+                let url = m.as_str().to_string();
+                if !seen.contains(&url) { seen.push(url.clone()); o.item(Kind::Social, url, "sherlock"); }
             }
         }
     }
@@ -1841,6 +1963,219 @@ async fn the_harvester(domain: &str, o: &mut Outcome) {
         }
     }
     o.log.push(format!("✓  theHarvester: {} email(s), {} host(s)", emails.len(), hosts.len()));
+}
+
+// ── more CLI tools (projectdiscovery / tomnomnom / OWASP) ───────────────────────
+async fn assetfinder(domain: &str, o: &mut Outcome) {
+    let Some(out) = run_tool("assetfinder", &["--subs-only", domain], o).await else { return };
+    let mut n = 0;
+    for line in out.lines() {
+        let h = line.trim().to_lowercase();
+        if h.ends_with(domain) && !h.is_empty() { n += 1; if n <= 300 { o.item(Kind::Domain, h, "subdomain"); } }
+    }
+    o.log.push(format!("✓  assetfinder: {n} subdomain(s)"));
+}
+
+async fn amass(domain: &str, o: &mut Outcome) {
+    let Some(out) = run_tool("amass", &["enum", "-passive", "-d", domain, "-silent"], o).await else { return };
+    let mut n = 0;
+    for line in out.lines() {
+        let h = line.trim().to_lowercase();
+        if h.ends_with(domain) && !h.is_empty() && !h.contains(' ') { n += 1; if n <= 400 { o.item(Kind::Domain, h, "subdomain"); } }
+    }
+    o.log.push(format!("✓  amass: {n} subdomain(s)"));
+}
+
+async fn gau(domain: &str, o: &mut Outcome) {
+    let Some(out) = run_tool("gau", &["--threads", "5", domain], o).await else { return };
+    let mut n = 0;
+    for line in out.lines() {
+        let u = line.trim();
+        if u.starts_with("http") { n += 1; if n <= 200 { o.item(Kind::Website, u.to_string(), "known url"); } }
+    }
+    o.log.push(format!("✓  gau: {n} URL(s)"));
+}
+
+async fn httpx(url: &str, o: &mut Outcome) {
+    let target = ensure_scheme(url);
+    let Some(out) = run_tool("httpx", &["-u", &target, "-silent", "-json", "-title", "-status-code", "-tech-detect", "-web-server"], o).await else { return };
+    let line = out.lines().find(|l| l.trim_start().starts_with('{')).unwrap_or("");
+    let j: serde_json::Value = serde_json::from_str(line).unwrap_or_default();
+    if let Some(s) = j.get("status_code").and_then(|v| v.as_i64()) { o.props.push(("status".into(), s.to_string())); o.log.push(format!("✓  status {s}")); }
+    if let Some(t) = j.get("title").and_then(|v| v.as_str()) { o.props.push(("title".into(), t.into())); }
+    if let Some(w) = j.get("webserver").and_then(|v| v.as_str()) { o.props.push(("server".into(), w.into())); o.item(Kind::Service, w.to_string(), "server"); }
+    if let Some(techs) = j.get("tech").and_then(|v| v.as_array()) {
+        for t in techs { if let Some(s) = t.as_str() { o.item(Kind::Service, s.to_string(), "tech"); } }
+    }
+    o.log.push("✓  httpx probe complete".into());
+}
+
+async fn katana(url: &str, o: &mut Outcome) {
+    let target = ensure_scheme(url);
+    let Some(out) = run_tool("katana", &["-u", &target, "-silent", "-d", "2"], o).await else { return };
+    let mut n = 0;
+    for line in out.lines() {
+        let u = line.trim();
+        if u.starts_with("http") { n += 1; if n <= 200 { o.item(Kind::Website, u.to_string(), "crawled"); } }
+    }
+    o.log.push(format!("✓  katana: {n} endpoint(s)"));
+}
+
+// ── more in-process APIs (no key) ──────────────────────────────────────────────
+async fn rapiddns(domain: &str, o: &mut Outcome) {
+    let url = format!("https://rapiddns.io/subdomain/{}?full=1", enc(domain));
+    let html = match client().get(&url).send().await { Ok(r) => r.text().await.unwrap_or_default(), Err(e) => { o.log.push(format!("✗  {e}")); return; } };
+    let re = Regex::new(&format!(r"([A-Za-z0-9_\-\.]+\.{})", regex::escape(domain))).unwrap();
+    let mut seen: Vec<String> = Vec::new();
+    for m in re.find_iter(&html) {
+        let h = m.as_str().to_lowercase();
+        if h != domain && !seen.contains(&h) && seen.len() < 300 { seen.push(h.clone()); o.item(Kind::Domain, h, "subdomain"); }
+    }
+    o.log.push(format!("✓  rapiddns: {} subdomain(s)", seen.len()));
+}
+
+async fn rdap_domain(domain: &str, o: &mut Outcome) {
+    let url = format!("https://rdap.org/domain/{}", enc(domain));
+    let j: serde_json::Value = match client().get(&url).send().await { Ok(r) => serde_json::from_str(&r.text().await.unwrap_or_default()).unwrap_or_default(), Err(e) => { o.log.push(format!("✗  {e}")); return; } };
+    if let Some(events) = j.get("events").and_then(|v| v.as_array()) {
+        for e in events {
+            let action = e.get("eventAction").and_then(|v| v.as_str()).unwrap_or("");
+            let date = e.get("eventDate").and_then(|v| v.as_str()).unwrap_or("");
+            if !action.is_empty() { o.props.push((action.into(), date.into())); o.log.push(format!("✓  {action}: {date}")); }
+        }
+    }
+    if let Some(entities) = j.get("entities").and_then(|v| v.as_array()) {
+        for ent in entities {
+            let roles = ent.get("roles").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(",")).unwrap_or_default();
+            if let Some(h) = ent.get("handle").and_then(|v| v.as_str()) { o.props.push((format!("entity ({roles})"), h.into())); }
+        }
+    }
+    if let Some(ns) = j.get("nameservers").and_then(|v| v.as_array()) {
+        for n in ns { if let Some(name) = n.get("ldhName").and_then(|v| v.as_str()) { o.item(Kind::Domain, name.to_lowercase(), "nameserver"); } }
+    }
+    if let Some(status) = j.get("status").and_then(|v| v.as_array()) {
+        let s = status.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", ");
+        if !s.is_empty() { o.props.push(("status".into(), s)); }
+    }
+    o.log.push("✓  RDAP record parsed".into());
+}
+
+async fn spf_record(domain: &str, o: &mut Outcome) {
+    use hickory_resolver::TokioAsyncResolver;
+    use hickory_resolver::config::{ResolverConfig, ResolverOpts};
+    let resolver = TokioAsyncResolver::tokio(ResolverConfig::cloudflare(), ResolverOpts::default());
+    let Ok(txt) = resolver.txt_lookup(domain).await else { o.log.push("✗  no TXT records".into()); return; };
+    let spf = txt.iter().map(|r| r.to_string()).find(|s| s.contains("v=spf1"));
+    let Some(spf) = spf else { o.log.push("◦  no SPF record".into()); return; };
+    o.props.push(("spf".into(), spf.clone()));
+    let mut n = 0;
+    for tok in spf.split_whitespace() {
+        if let Some(d) = tok.strip_prefix("include:").or_else(|| tok.strip_prefix("redirect=")) {
+            n += 1; o.item(Kind::Domain, d.to_lowercase(), "spf include");
+        } else if let Some(ip) = tok.strip_prefix("ip4:").or_else(|| tok.strip_prefix("ip6:")) {
+            n += 1; o.item(Kind::Netblock, ip.to_string(), "spf allow");
+        }
+    }
+    o.log.push(format!("✓  SPF parsed: {n} sender source(s)"));
+}
+
+async fn dmarc_record(domain: &str, o: &mut Outcome) {
+    use hickory_resolver::TokioAsyncResolver;
+    use hickory_resolver::config::{ResolverConfig, ResolverOpts};
+    let resolver = TokioAsyncResolver::tokio(ResolverConfig::cloudflare(), ResolverOpts::default());
+    let Ok(txt) = resolver.txt_lookup(format!("_dmarc.{domain}")).await else { o.log.push("◦  no _dmarc record".into()); return; };
+    let rec = txt.iter().map(|r| r.to_string()).find(|s| s.contains("v=DMARC1"));
+    let Some(rec) = rec else { o.log.push("◦  no DMARC policy published".into()); return; };
+    for kv in rec.split(';') {
+        let kv = kv.trim();
+        if let Some((k, val)) = kv.split_once('=') { o.props.push((format!("dmarc {}", k.trim()), val.trim().to_string())); }
+    }
+    let policy = rec.split(';').find_map(|p| p.trim().strip_prefix("p=")).unwrap_or("none");
+    o.item(Kind::Phrase, format!("DMARC p={policy}"), "policy");
+    o.log.push(format!("✓  DMARC policy: p={policy}"));
+}
+
+async fn rdap_ip(ip: &str, o: &mut Outcome) {
+    let url = format!("https://rdap.org/ip/{}", enc(ip));
+    let j: serde_json::Value = match client().get(&url).send().await { Ok(r) => serde_json::from_str(&r.text().await.unwrap_or_default()).unwrap_or_default(), Err(e) => { o.log.push(format!("✗  {e}")); return; } };
+    if let Some(name) = j.get("name").and_then(|v| v.as_str()) { o.props.push(("netname".into(), name.into())); o.log.push(format!("✓  netname {name}")); }
+    if let (Some(start), Some(end)) = (j.get("startAddress").and_then(|v| v.as_str()), j.get("endAddress").and_then(|v| v.as_str())) {
+        o.item(Kind::Netblock, format!("{start} – {end}"), "range");
+    }
+    if let Some(cidr) = j.get("cidr0_cidrs").and_then(|v| v.as_array()).and_then(|a| a.first()) {
+        if let (Some(p), Some(l)) = (cidr.get("v4prefix").or_else(|| cidr.get("v6prefix")).and_then(|v| v.as_str()), cidr.get("length").and_then(|v| v.as_i64())) {
+            o.item(Kind::Netblock, format!("{p}/{l}"), "cidr");
+        }
+    }
+    if let Some(entities) = j.get("entities").and_then(|v| v.as_array()) {
+        for ent in entities { if let Some(h) = ent.get("handle").and_then(|v| v.as_str()) { o.props.push(("org/abuse".into(), h.into())); } }
+    }
+    o.log.push("✓  RDAP IP record parsed".into());
+}
+
+async fn bgpview_ip(ip: &str, o: &mut Outcome) {
+    // RIPEstat network-info → announcing prefix + ASN(s); then as-overview for the holder.
+    let url = format!("https://stat.ripe.net/data/network-info/data.json?resource={}", enc(ip));
+    let j: serde_json::Value = match client().get(&url).send().await { Ok(r) => serde_json::from_str(&r.text().await.unwrap_or_default()).unwrap_or_default(), Err(e) => { o.log.push(format!("✗  {e}")); return; } };
+    let data = j.get("data").cloned().unwrap_or_default();
+    if let Some(prefix) = data.get("prefix").and_then(|v| v.as_str()) {
+        o.item(Kind::Netblock, prefix.to_string(), "prefix");
+        o.log.push(format!("✓  prefix {prefix}"));
+    }
+    if let Some(asns) = data.get("asns").and_then(|v| v.as_array()) {
+        for a in asns {
+            if let Some(asn) = a.as_str() {
+                o.item(Kind::Asn, format!("AS{asn}"), "announced by");
+                // holder name
+                let ov = format!("https://stat.ripe.net/data/as-overview/data.json?resource=AS{asn}");
+                if let Ok(r) = client().get(&ov).send().await {
+                    if let Ok(oj) = serde_json::from_str::<serde_json::Value>(&r.text().await.unwrap_or_default()) {
+                        if let Some(holder) = oj.pointer("/data/holder").and_then(|v| v.as_str()) {
+                            o.props.push((format!("AS{asn} holder"), holder.into()));
+                            o.log.push(format!("✓  AS{asn} — {holder}"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    o.log.push("✓  RIPEstat BGP lookup complete".into());
+}
+
+async fn keybase(username: &str, o: &mut Outcome) {
+    let url = format!("https://keybase.io/_/api/1.0/user/lookup.json?usernames={}&fields=proofs_summary", enc(username));
+    let j: serde_json::Value = match client().get(&url).send().await { Ok(r) => serde_json::from_str(&r.text().await.unwrap_or_default()).unwrap_or_default(), Err(e) => { o.log.push(format!("✗  {e}")); return; } };
+    let them = j.pointer("/them/0").cloned().unwrap_or_default();
+    if them.is_null() { o.log.push("◦  no Keybase account".into()); return; }
+    if let Some(proofs) = them.pointer("/proofs_summary/all").and_then(|v| v.as_array()) {
+        for p in proofs {
+            let svc = p.get("proof_type").and_then(|v| v.as_str()).unwrap_or("");
+            let nym = p.get("nametag").and_then(|v| v.as_str()).unwrap_or("");
+            let link = p.get("service_url").and_then(|v| v.as_str()).unwrap_or("");
+            o.log.push(format!("✓  {svc}: {nym}"));
+            if !link.is_empty() { o.item(Kind::Social, link.to_string(), svc.to_string()); }
+        }
+    }
+    o.log.push("✓  Keybase proofs parsed".into());
+}
+
+async fn gitlab_user(username: &str, o: &mut Outcome) {
+    let url = format!("https://gitlab.com/api/v4/users?username={}", enc(username));
+    let j: serde_json::Value = match client().get(&url).send().await { Ok(r) => serde_json::from_str(&r.text().await.unwrap_or_default()).unwrap_or_default(), Err(e) => { o.log.push(format!("✗  {e}")); return; } };
+    let Some(u) = j.as_array().and_then(|a| a.first()) else { o.log.push("◦  no GitLab user".into()); return; };
+    if let Some(name) = u.get("name").and_then(|v| v.as_str()) { o.props.push(("name".into(), name.into())); o.item(Kind::Person, name.to_string(), "gitlab name"); }
+    if let Some(id) = u.get("id").and_then(|v| v.as_i64()) { o.props.push(("gitlab id".into(), id.to_string())); }
+    if let Some(web) = u.get("web_url").and_then(|v| v.as_str()) { o.item(Kind::Social, web.to_string(), "gitlab"); o.log.push(format!("✓  {web}")); }
+}
+
+async fn hackernews_user(username: &str, o: &mut Outcome) {
+    let url = format!("https://hacker-news.firebaseio.com/v0/user/{}.json", enc(username));
+    let j: serde_json::Value = match client().get(&url).send().await { Ok(r) => serde_json::from_str(&r.text().await.unwrap_or_default()).unwrap_or_default(), Err(e) => { o.log.push(format!("✗  {e}")); return; } };
+    if j.is_null() { o.log.push("◦  no Hacker News user".into()); return; }
+    if let Some(k) = j.get("karma").and_then(|v| v.as_i64()) { o.props.push(("karma".into(), k.to_string())); o.log.push(format!("✓  karma {k}")); }
+    if let Some(c) = j.get("created").and_then(|v| v.as_i64()) { o.props.push(("created (unix)".into(), c.to_string())); }
+    if let Some(about) = j.get("about").and_then(|v| v.as_str()) { if !about.is_empty() { o.props.push(("about".into(), about.chars().take(200).collect())); } }
+    o.item(Kind::Social, format!("https://news.ycombinator.com/user?id={username}"), "hacker news");
 }
 
 fn ensure_scheme(v: &str) -> String {

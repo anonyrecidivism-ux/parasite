@@ -14,6 +14,7 @@ fn d_style() -> NodeStyle  { NodeStyle::Flat }
 fn d_sens()  -> f32        { 0.6 }
 
 #[derive(Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Settings {
     pub theme:       String,
     pub accent:      Option<[u8; 3]>,
@@ -55,7 +56,7 @@ fn d_true() -> bool { true }
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            theme: "Anthropic".into(),
+            theme: "Parasite".into(),
             accent: None,
             node_radius: 22.0,
             show_grid: true,

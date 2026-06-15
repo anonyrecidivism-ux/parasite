@@ -22,6 +22,8 @@ pub enum Kind {
     Asn,
     Cve,
     BtcAddress,
+    EthAddress,
+    Transaction,
     MacAddress,
     Coordinate,
     Document,
@@ -35,12 +37,13 @@ pub enum Kind {
 }
 
 impl Kind {
-    pub const ALL: [Kind; 23] = [
+    pub const ALL: [Kind; 25] = [
         Kind::Domain, Kind::Website, Kind::Ip, Kind::Email, Kind::Phone,
         Kind::Person, Kind::Username, Kind::Social, Kind::Organization,
-        Kind::Location, Kind::Asn, Kind::Cve, Kind::BtcAddress, Kind::MacAddress,
-        Kind::Coordinate, Kind::Document, Kind::Service, Kind::OperatingSystem,
-        Kind::File, Kind::Hash, Kind::Port, Kind::Netblock, Kind::Phrase,
+        Kind::Location, Kind::Asn, Kind::Cve, Kind::BtcAddress, Kind::EthAddress,
+        Kind::Transaction, Kind::MacAddress, Kind::Coordinate, Kind::Document,
+        Kind::Service, Kind::OperatingSystem, Kind::File, Kind::Hash, Kind::Port,
+        Kind::Netblock, Kind::Phrase,
     ];
 
     pub fn label(self) -> &'static str {
@@ -58,6 +61,8 @@ impl Kind {
             Kind::Asn          => "ASN",
             Kind::Cve          => "CVE",
             Kind::BtcAddress   => "BTC Address",
+            Kind::EthAddress   => "ETH Address",
+            Kind::Transaction  => "Transaction",
             Kind::MacAddress   => "MAC Address",
             Kind::Coordinate   => "Coordinate",
             Kind::Document     => "Document",
@@ -87,6 +92,8 @@ impl Kind {
             Kind::Asn          => "§",
             Kind::Cve          => "‼",
             Kind::BtcAddress   => "Ƀ",
+            Kind::EthAddress   => "Ξ",
+            Kind::Transaction  => "⇄",
             Kind::MacAddress   => "⌗",
             Kind::Coordinate   => "⌖",
             Kind::Document     => "❏",
@@ -115,6 +122,8 @@ impl Kind {
             Kind::Asn          => Color32::from_rgb(160, 160, 210),
             Kind::Cve          => Color32::from_rgb(220, 90, 90),
             Kind::BtcAddress   => Color32::from_rgb(242, 169, 0),
+            Kind::EthAddress   => Color32::from_rgb(130, 130, 230),
+            Kind::Transaction  => Color32::from_rgb(120, 200, 200),
             Kind::MacAddress   => Color32::from_rgb(140, 150, 170),
             Kind::Coordinate   => Color32::from_rgb(110, 190, 140),
             Kind::Document     => Color32::from_rgb(170, 160, 140),
@@ -143,6 +152,8 @@ impl Kind {
             Kind::Asn          => "AS15169",
             Kind::Cve          => "CVE-2021-44228",
             Kind::BtcAddress   => "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
+            Kind::EthAddress   => "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+            Kind::Transaction  => "0x…txhash",
             Kind::MacAddress   => "00:1A:2B:3C:4D:5E",
             Kind::Coordinate   => "52.5200, 13.4050",
             Kind::Document     => "/path/to/doc.pdf",

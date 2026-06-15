@@ -4,6 +4,7 @@
 //! `parasite` recon engine.
 
 mod app;
+mod browser;
 mod canvas;
 mod engine;
 mod export;
@@ -12,9 +13,9 @@ mod install;
 mod keys;
 mod logo;
 mod model;
+mod monitor;
 mod mtgx;
 mod settings;
-mod sherlock;
 mod theme;
 mod transforms;
 
@@ -23,12 +24,15 @@ use settings::Settings;
 use theme::*;
 
 #[derive(Clone, Copy, PartialEq)]
-enum AppMode { Graph, Geo }
+enum AppMode { Graph, Geo, Monitor, Browser }
 
 struct Shell {
     mode:          AppMode,
     graph:         app::GraphPanel,
     geo:           geoint::GeoPanel,
+    monitor:       monitor::MonitorPanel,
+    browser:       browser::BrowserPanel,
+    embed:         Embed,
     settings:      Settings,
     show_settings: bool,
 }
@@ -42,25 +46,305 @@ impl Shell {
             mode: AppMode::Graph,
             graph: app::GraphPanel::new(),
             geo: geoint::GeoPanel::new(),
+            monitor: monitor::MonitorPanel::new(),
+            browser: browser::BrowserPanel::new(),
+            embed: Embed::new(),
             show_settings: false,
             settings,
         }
     }
 }
 
-/// Open a URL in the system browser.
+/// Open a URL in ParasiteGoogle. On Hyprland the page loads in the embedded
+/// overlay (the Shell switches to the ParasiteGoogle tab and shows the browser);
+/// elsewhere it opens a standalone window. The browser only ever appears as a
+/// result of an explicit open like this — never on its own.
 pub fn app_open(url: &str) {
+    nav_write(url);
+    if let Ok(mut g) = pending_open().lock() { *g = Some(url.to_string()); }
+    if !hypr_available() { launch_browser(url); }
+}
+
+/// A URL waiting to be opened in the overlay (set by `app_open`, consumed by the Shell).
+fn pending_open() -> &'static std::sync::Mutex<Option<String>> {
+    static P: std::sync::OnceLock<std::sync::Mutex<Option<String>>> = std::sync::OnceLock::new();
+    P.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+/// Path of the parasite↔ParasiteGoogle navigation control file (mirrors the one
+/// the `parasitegoogle` binary watches).
+fn nav_path() -> std::path::PathBuf {
+    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    dir.join("parasitegoogle.nav")
+}
+
+/// Write a navigation request; the token forces a re-navigation even to the same URL.
+fn nav_write(url: &str) {
+    let token = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos()).unwrap_or(0);
+    let _ = std::fs::write(nav_path(), format!("{token} {url}"));
+}
+
+/// Is the Hyprland compositor available (so we can overlay the browser)?
+fn hypr_available() -> bool {
+    static A: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *A.get_or_init(|| std::process::Command::new("hyprctl").arg("version")
+        .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
+        .status().map(|s| s.success()).unwrap_or(false))
+}
+
+/// Spawn the standalone `parasitegoogle` browser binary on `url`. Tries the copy
+/// sitting next to the current executable first, then `$PATH`, and finally falls
+/// back to the OS browser. Always non-blocking and detached, so a slow page can
+/// never freeze the parasite window.
+pub fn launch_browser(url: &str) {
+    let sibling = std::env::current_exe().ok()
+        .and_then(|p| p.parent().map(|d| d.join("parasitegoogle")));
+    if let Some(path) = sibling {
+        if path.exists() && spawn_detached(path.as_os_str(), url) { return; }
+    }
+    if spawn_detached(std::ffi::OsStr::new("parasitegoogle"), url) { return; }
+    system_open(url);
+}
+
+fn spawn_detached(program: &std::ffi::OsStr, url: &str) -> bool {
+    std::process::Command::new(program)
+        .arg(url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .is_ok()
+}
+
+/// Hand a URL to the operating-system browser (best-effort, multi-fallback).
+pub fn system_open(url: &str) {
     let url = url.to_string();
     #[cfg(target_os = "linux")]
-    let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+    {
+        for (cmd, args) in [("xdg-open", vec![url.as_str()]),
+                            ("gio", vec!["open", url.as_str()]),
+                            ("firefox", vec![url.as_str()]),
+                            ("chromium", vec![url.as_str()]),
+                            ("google-chrome", vec![url.as_str()])] {
+            if std::process::Command::new(cmd).args(&args)
+                .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
+                .spawn().is_ok() { return; }
+        }
+    }
     #[cfg(target_os = "macos")]
     let _ = std::process::Command::new("open").arg(&url).spawn();
     #[cfg(target_os = "windows")]
     let _ = std::process::Command::new("cmd").args(["/C", "start", "", &url]).spawn();
 }
 
+// ── ParasiteGoogle overlay (real WebKit window positioned over the panel) ─────
+//
+// A live web engine can't share egui's GL/winit surface, so the real browser is
+// its own window that the Hyprland compositor floats *exactly over* the browser
+// panel and resizes/moves to follow it. From the user's seat it looks embedded.
+/// State shared between the UI thread and the overlay worker thread. The UI only
+/// ever writes cheap fields here (never calls `hyprctl`), so it can never block.
+#[derive(Default)]
+struct EmbedShared {
+    show:      bool,                       // overlay should be visible & tracking
+    open_seq:  u64,                        // bump to (re)spawn the browser
+    panel:     Option<(f32, f32, f32, f32)>, // browser-panel rect in egui points
+    surf:      (f32, f32),                 // egui surface size in points
+    theme:     [String; 7],                // bg,bar,input,accent,text,textsec,border (hex)
+    closed:    bool,                       // worker → UI: the window was closed
+    quit:      bool,
+}
+
+/// Snapshot the active palette into the 7 colours the browser chrome uses.
+fn browser_theme() -> [String; 7] {
+    [theme::hex(bg_app()), theme::hex(bg_panel()), theme::hex(bg_input()),
+     theme::hex(accent()), theme::hex(text_pri()), theme::hex(text_sec()),
+     theme::hex(border())]
+}
+
+/// The overlay manager. All compositor I/O happens on a dedicated worker thread,
+/// so the egui UI thread is never stalled (that stall was the "not responding").
+struct Embed {
+    avail:  bool,
+    active: bool,                          // UI-side: user opened a page
+    shared: std::sync::Arc<std::sync::Mutex<EmbedShared>>,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Embed {
+    fn new() -> Self {
+        let avail = hypr_available();
+        let shared = std::sync::Arc::new(std::sync::Mutex::new(EmbedShared::default()));
+        let worker = if avail {
+            let sh = shared.clone();
+            Some(std::thread::spawn(move || embed_worker(sh)))
+        } else { None };
+        Self { avail, active: false, shared, worker }
+    }
+
+    /// User explicitly opened a page → ask the worker to (re)spawn and show it.
+    fn open(&mut self) {
+        if !self.avail { return; }
+        self.active = true;
+        let mut s = self.shared.lock().unwrap();
+        s.open_seq += 1;
+        s.closed = false;
+    }
+
+    /// Called every frame with the current desired visibility + panel geometry.
+    /// Pure data hand-off — no blocking. Also notices when the user closed the
+    /// browser window (so we drop back to the launcher without respawning).
+    fn frame(&mut self, show: bool, panel: Option<egui::Rect>, surf: egui::Vec2) {
+        if !self.avail { return; }
+        let theme = browser_theme();  // computed on the UI thread (thread-local palette)
+        let mut s = self.shared.lock().unwrap();
+        if s.closed { self.active = false; s.closed = false; }
+        s.show = show && self.active;
+        s.panel = panel.map(|r| (r.min.x, r.min.y, r.width(), r.height()));
+        s.surf = (surf.x, surf.y);
+        s.theme = theme;
+    }
+
+    fn shutdown(&mut self) {
+        if let Ok(mut s) = self.shared.lock() { s.quit = true; }
+        if let Some(h) = self.worker.take() { let _ = h.join(); }
+    }
+}
+
+impl Drop for Embed {
+    fn drop(&mut self) { self.shutdown(); }
+}
+
+/// Run a Lua dispatch against Hyprland (0.5x replaced the text protocol with Lua).
+fn hypr_lua(code: &str) {
+    let _ = std::process::Command::new("hyprctl").args(["dispatch", code])
+        .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
+}
+
+/// Geometry of the parasite window, straight from the compositor — Wayland won't
+/// tell a client its own absolute position, so we ask Hyprland. (x, y, w, h).
+fn parasite_geom() -> Option<(i32, i32, i32, i32)> {
+    let out = std::process::Command::new("hyprctl").args(["clients", "-j"]).output().ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    for c in v.as_array()? {
+        if c.get("class").and_then(|x| x.as_str()) != Some("parasite-gui") { continue; }
+        // skip when parasite isn't actually on screen (minimised / other workspace)
+        if c.get("mapped").and_then(|x| x.as_bool()) == Some(false) { return None; }
+        let at = c.get("at")?.as_array()?;
+        let size = c.get("size")?.as_array()?;
+        return Some((at[0].as_i64()? as i32, at[1].as_i64()? as i32,
+                     size[0].as_i64()? as i32, size[1].as_i64()? as i32));
+    }
+    None
+}
+
+fn spawn_browser(theme: &[String; 7]) -> Option<std::process::Child> {
+    let _ = std::process::Command::new("pkill").args(["-x", "parasitegoogle"]).status();
+    let prog = std::env::current_exe().ok()
+        .and_then(|p| p.parent().map(|d| d.join("parasitegoogle")))
+        .filter(|p| p.exists());
+    let mut cmd = match prog {
+        Some(p) => std::process::Command::new(p),
+        None => std::process::Command::new("parasitegoogle"),
+    };
+    // hand the active parasite theme to the browser chrome
+    for (k, v) in ["PG_BG", "PG_BAR", "PG_INPUT", "PG_ACCENT", "PG_TEXT", "PG_TEXTSEC", "PG_BORDER"]
+        .iter().zip(theme.iter()) {
+        if !v.is_empty() { cmd.env(k, v); }
+    }
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().ok()
+}
+
+/// The worker thread: owns the browser process and does every `hyprctl` call, so
+/// the UI thread never waits on the compositor. Polls ~every 120 ms.
+fn embed_worker(shared: std::sync::Arc<std::sync::Mutex<EmbedShared>>) {
+    let mut child: Option<std::process::Child> = None;
+    let mut last_open = 0u64;
+    let mut last_geom: Option<(i32, i32, i32, i32)> = None;
+    let mut hidden = true;
+
+    loop {
+        let (show, open_seq, panel, surf, theme, quit) = {
+            let s = shared.lock().unwrap();
+            (s.show, s.open_seq, s.panel, s.surf, s.theme.clone(), s.quit)
+        };
+        if quit {
+            if let Some(mut c) = child.take() { let _ = c.kill(); }
+            let _ = std::process::Command::new("pkill").args(["-x", "parasitegoogle"]).status();
+            return;
+        }
+
+        // notice the user closing the browser window
+        if let Some(c) = &mut child {
+            if matches!(c.try_wait(), Ok(Some(_))) {
+                child = None;
+                shared.lock().unwrap().closed = true;
+                last_geom = None;
+            }
+        }
+
+        // (re)spawn on an explicit open request
+        if open_seq != last_open {
+            last_open = open_seq;
+            if child.is_none() { child = spawn_browser(&theme); last_geom = None; hidden = false; }
+        }
+
+        if show && child.is_some() {
+            if let (Some(p), Some(win)) = (panel, parasite_geom()) {
+                let (wx, wy, ww, wh) = win;
+                let fx = if surf.0 > 1.0 { ww as f32 / surf.0 } else { 1.0 };
+                let fy = if surf.1 > 1.0 { wh as f32 / surf.1 } else { 1.0 };
+                // clamp strictly inside the parasite window so it can't spill onto
+                // neighbouring windows
+                let mut x = wx + (p.0 * fx).round() as i32;
+                let mut y = wy + (p.1 * fy).round() as i32;
+                let mut w = (p.2 * fx).round() as i32;
+                let mut h = (p.3 * fy).round() as i32;
+                x = x.clamp(wx, wx + ww);
+                y = y.clamp(wy, wy + wh);
+                w = w.clamp(1, wx + ww - x);
+                h = h.clamp(1, wy + wh - y);
+                let g = (x, y, w, h);
+                if last_geom != Some(g) {
+                    hypr_lua(&format!(
+                        "(function() local g; for _,q in ipairs(hl.get_windows()) do if q.class==\"parasitegoogle\" then g=q end end; \
+                         if not g then return nil end; \
+                         if not g.floating then hl.dispatch(hl.dsp.window.float({{window=g}})) end; \
+                         pcall(function() hl.dispatch(hl.dsp.window.set_prop({{window=g, prop=\"rounding\", value=0}})) end); \
+                         hl.dispatch(hl.dsp.window.resize({{window=g, x={w}, y={h}}})); \
+                         return hl.dsp.window.move({{window=g, x={x}, y={y}}}) end)()"));
+                    last_geom = Some(g);
+                    hidden = false;
+                }
+            }
+        } else if !hidden && child.is_some() {
+            hypr_lua("(function() local g; for _,q in ipairs(hl.get_windows()) do if q.class==\"parasitegoogle\" then g=q end end; \
+                      if not g then return nil end; return hl.dsp.window.move({window=g, x=200000, y=200000}) end)()");
+            hidden = true;
+            last_geom = None;
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(120));
+    }
+}
+
 impl eframe::App for Shell {
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.embed.shutdown();
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // a link/search was triggered → switch to the browser tab and open it
+        if let Some(_url) = pending_open().lock().ok().and_then(|mut g| g.take()) {
+            if self.embed.avail {
+                self.mode = AppMode::Browser;
+                self.embed.open();
+            }
+        }
+
         egui::TopBottomPanel::top("shell_tabs")
             .frame(egui::Frame::none().fill(bg_sidebar())
                 .inner_margin(Margin::symmetric(12.0, 6.0))
@@ -74,6 +358,8 @@ impl eframe::App for Shell {
 
                     mode_tab(ui, &mut self.mode, AppMode::Graph, "◇ Graph");
                     mode_tab(ui, &mut self.mode, AppMode::Geo, "◎ GEOINT");
+                    mode_tab(ui, &mut self.mode, AppMode::Monitor, "⏱ Monitor");
+                    mode_tab(ui, &mut self.mode, AppMode::Browser, "🌐 ParasiteGoogle");
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let gear = ui.add(egui::Button::new(
@@ -94,13 +380,28 @@ impl eframe::App for Shell {
             });
 
         match self.mode {
-            AppMode::Graph => self.graph.ui(ctx),
-            AppMode::Geo   => self.geo.ui(ctx),
+            AppMode::Graph   => self.graph.ui(ctx),
+            AppMode::Geo     => self.geo.ui(ctx),
+            AppMode::Monitor => self.monitor.ui(ctx),
+            AppMode::Browser => self.browser.ui(ctx),
         }
 
-        self.settings_window(ctx);
-        if !self.settings.welcomed {
-            self.welcome_window(ctx);
+        // don't draw settings/welcome over a video recording
+        if !self.graph.recording() {
+            self.settings_window(ctx);
+            if !self.settings.welcomed {
+                self.welcome_window(ctx);
+            }
+        }
+
+        // Hand the overlay worker the desired visibility + panel rect. This is a
+        // pure non-blocking data hand-off — all hyprctl I/O happens off-thread, so
+        // the UI can never appear "not responding".
+        let on_tab = self.mode == AppMode::Browser
+            && !self.show_settings && self.settings.welcomed && !self.graph.recording();
+        self.embed.frame(on_tab, self.browser.last_rect, ctx.screen_rect().size());
+        if on_tab && self.embed.active {
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
         }
     }
 }
@@ -294,72 +595,93 @@ impl Shell {
 
     fn welcome_window(&mut self, ctx: &egui::Context) {
         let mut dismissed = false;
-        egui::Area::new(egui::Id::new("welcome_dim"))
-            .order(egui::Order::Middle)
+        let screen = ctx.screen_rect();
+
+        egui::Area::new(egui::Id::new("welcome"))
+            .order(egui::Order::Foreground)
             .fixed_pos(egui::Pos2::ZERO)
             .show(ctx, |ui| {
-                let screen = ctx.screen_rect();
+                // full-screen dim that also blocks clicks reaching the app behind
+                let block = ui.allocate_rect(screen, egui::Sense::click_and_drag());
                 ui.painter().rect_filled(screen, Rounding::ZERO,
-                    Color32::from_rgba_unmultiplied(0, 0, 0, 150));
-            });
+                    Color32::from_rgba_unmultiplied(8, 7, 6, 205));
 
-        egui::Window::new(RichText::new("Welcome to parasite").color(text_pri()).strong().size(20.0))
-            .collapsible(false).resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .default_width(560.0)
-            .frame(egui::Frame::window(&ctx.style()).fill(bg_panel()).stroke(Stroke::new(1.5, accent_dark())))
-            .show(ctx, |ui| {
-                ui.add_space(4.0);
-                ui.vertical_centered(|ui| { logo::widget(ui, 46.0); });
-                ui.add_space(6.0);
-                ui.label(RichText::new("An open-source, graph-based OSINT toolkit — a free Maltego alternative.")
-                    .color(text_sec()).size(13.5));
-                ui.add_space(12.0);
+                // centred card
+                let cw = 560.0_f32;
+                let card = egui::Rect::from_min_size(
+                    egui::pos2(screen.center().x - cw / 2.0, screen.center().y - 250.0),
+                    egui::Vec2::new(cw, 500.0));
+                let p = ui.painter();
+                p.rect_filled(card, Rounding::same(18.0), bg_panel());
+                p.rect_stroke(card, Rounding::same(18.0), Stroke::new(1.0, border()));
+                // accent header strip
+                let strip = egui::Rect::from_min_size(card.min, egui::Vec2::new(cw, 5.0));
+                p.rect_filled(strip, Rounding { nw: 18.0, ne: 18.0, sw: 0.0, se: 0.0 }, accent());
 
-                ui.label(RichText::new("HOW IT WORKS").color(accent()).size(11.0).strong());
-                ui.add_space(6.0);
-                for (n, line) in [
-                    ("1", "Add an entity from the left palette — a Domain, IP, Email, Username, Hash…"),
-                    ("2", "Right-click the node (or use the right panel) to run a transform."),
-                    ("3", "Transforms discover related entities and link them automatically."),
-                    ("4", "Keep expanding to map out infrastructure, people and accounts."),
-                ] {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(format!(" {n} ")).color(Color32::WHITE)
-                            .background_color(accent()).strong());
-                        ui.add_space(6.0);
-                        ui.label(RichText::new(line).color(text_pri()).size(13.0));
+                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(card.shrink2(egui::Vec2::new(40.0, 30.0))), |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(8.0);
+                        logo::widget(ui, 40.0);
+                        ui.add_space(10.0);
+                        ui.horizontal(|ui| {
+                            let w = ui.available_width();
+                            ui.add_space((w - 200.0).max(0.0) / 2.0);
+                            ui.label(RichText::new("parasite").color(text_pri()).strong().size(30.0));
+                            ui.label(RichText::new(".osint").color(accent()).strong().size(30.0));
+                        });
+                        ui.add_space(2.0);
+                        ui.label(RichText::new("an open-source, graph-based OSINT toolkit — a free Maltego alternative")
+                            .color(text_sec()).size(12.5));
+                        ui.add_space(20.0);
                     });
-                    ui.add_space(4.0);
-                }
 
-                ui.add_space(8.0);
-                ui.label(RichText::new("TRY THIS").color(accent()).size(11.0).strong());
-                ui.add_space(4.0);
-                ui.label(RichText::new("• Add a Username (e.g. \"torvalds\") → right-click → Hunt Accounts\n\
-                                        • Add a Domain → right-click → Subdomains (crt.sh) / WHOIS / DNS Records")
-                    .color(text_sec()).size(12.5));
+                    // three mode cards
+                    let modes = [
+                        ("◇", "Graph", "entities + 110 transforms", accent()),
+                        ("◎", "GEOINT", "maps, EXIF GPS, satellite", c_info()),
+                        ("⏱", "Monitor", "live crypto transactions", c_ok()),
+                    ];
+                    ui.columns(3, |cols| {
+                        for (i, (icon, name, desc, col)) in modes.iter().enumerate() {
+                            cols[i].vertical_centered(|ui| {
+                                egui::Frame::none().fill(bg_item_hov()).rounding(Rounding::same(8.0))
+                                    .inner_margin(Margin::symmetric(8.0, 12.0)).stroke(Stroke::new(1.0, border()))
+                                    .show(ui, |ui| {
+                                        ui.set_min_width(ui.available_width());
+                                        ui.vertical_centered(|ui| {
+                                            ui.label(RichText::new(*icon).color(*col).size(22.0));
+                                            ui.add_space(3.0);
+                                            ui.label(RichText::new(*name).color(text_pri()).strong().size(13.0));
+                                            ui.label(RichText::new(*desc).color(text_mut()).size(10.0));
+                                        });
+                                    });
+                            });
+                        }
+                    });
 
-                ui.add_space(12.0);
-                ui.label(RichText::new("⚠  For authorized security testing, research & education only. \
-                                        You are responsible for what you target.")
-                    .color(c_warn()).size(11.5).italics());
+                    ui.add_space(16.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(RichText::new("TRY IT")
+                            .color(accent()).size(10.5).strong());
+                        ui.add_space(4.0);
+                        ui.label(RichText::new("Add a Username \"torvalds\" → right-click → Hunt Accounts")
+                            .color(text_sec()).size(12.0));
+                        ui.add_space(18.0);
 
-                ui.add_space(14.0);
-                ui.horizontal(|ui| {
-                    let go = ui.add_sized([150.0, 34.0], egui::Button::new(
-                        RichText::new("▶  Get started").color(Color32::WHITE).strong().size(13.5))
-                        .fill(accent()).rounding(Rounding::same(6.0)));
-                    if go.hovered() { ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand); }
-                    if go.clicked() { dismissed = true; }
-                    ui.add_space(8.0);
-                    ui.label(RichText::new("open the ⚙ Settings to pick a theme & customize")
-                        .color(text_mut()).size(11.0));
+                        let go = ui.add_sized([200.0, 38.0], egui::Button::new(
+                            RichText::new("▶  Get started").color(Color32::WHITE).strong().size(14.0))
+                            .fill(accent()).rounding(Rounding::same(8.0)));
+                        if go.hovered() { ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand); }
+                        if go.clicked() { dismissed = true; }
+                        ui.add_space(12.0);
+                        ui.label(RichText::new("⚠  for authorized security testing & research only")
+                            .color(text_mut()).size(10.5).italics());
+                    });
                 });
-                ui.add_space(2.0);
+                let _ = block;
             });
 
-        if dismissed || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+        if dismissed || ctx.input(|i| i.key_pressed(egui::Key::Escape) || i.key_pressed(egui::Key::Enter)) {
             self.settings.welcomed = true;
             self.settings.save();
         }
@@ -398,9 +720,15 @@ pub fn run() -> eframe::Result<()> {
         return Ok(());
     }
 
+    // Drop any stale browser nav request from a previous session, and make sure no
+    // orphaned browser window is lingering, so nothing pops up on its own.
+    let _ = std::fs::remove_file(nav_path());
+    let _ = std::process::Command::new("pkill").args(["-x", "parasitegoogle"]).status();
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("parasite — OSINT graph")
+            .with_app_id("parasite-gui")
             .with_inner_size([1360.0, 860.0])
             .with_min_inner_size([960.0, 640.0])
             .with_icon(load_icon()),

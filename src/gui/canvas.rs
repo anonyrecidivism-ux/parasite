@@ -698,7 +698,9 @@ pub fn shape_for_kind(kind: super::model::Kind) -> NodeShape {
         Organization                         => NodeShape::Pentagon,
         Location | Coordinate                => NodeShape::Triangle,
         Cve | Service | OperatingSystem | Port => NodeShape::Octagon,
-        Asn | File | Document | Hash | BtcAddress => NodeShape::Square,
+        BtcAddress | EthAddress              => NodeShape::Star,
+        Transaction                          => NodeShape::Plus,
+        Asn | File | Document | Hash         => NodeShape::Square,
     }
 }
 
@@ -787,17 +789,43 @@ fn shape_pts(c: Pos2, r: f32, shape: NodeShape) -> Vec<Pos2> {
         NodeShape::Triangle => regular(c, r, 3),
         NodeShape::Pentagon => regular(c, r, 5),
         NodeShape::Hexagon  => regular(c, r, 6),
+        NodeShape::Heptagon => regular(c, r, 7),
         NodeShape::Octagon  => regular(c, r, 8),
+        NodeShape::Star => (0..10).map(|i| {
+            let rad = if i % 2 == 0 { r } else { r * 0.42 };
+            let a = std::f32::consts::PI / 5.0 * i as f32 - std::f32::consts::FRAC_PI_2;
+            egui::pos2(c.x + rad * a.cos(), c.y + rad * a.sin())
+        }).collect(),
+        NodeShape::Plus => {
+            let (o, n) = (r * 0.36, r * 0.95); // arm half-width, length
+            vec![
+                egui::pos2(c.x - o, c.y - n), egui::pos2(c.x + o, c.y - n),
+                egui::pos2(c.x + o, c.y - o), egui::pos2(c.x + n, c.y - o),
+                egui::pos2(c.x + n, c.y + o), egui::pos2(c.x + o, c.y + o),
+                egui::pos2(c.x + o, c.y + n), egui::pos2(c.x - o, c.y + n),
+                egui::pos2(c.x - o, c.y + o), egui::pos2(c.x - n, c.y + o),
+                egui::pos2(c.x - n, c.y - o), egui::pos2(c.x - o, c.y - o),
+            ]
+        }
         NodeShape::Circle | NodeShape::ByType => Vec::new(),
     }
 }
 
+/// Solid fill of a shape. Uses a centre-fan mesh so concave shapes (Star, Plus)
+/// fill correctly too (convex_polygon would only fill the convex hull).
 fn fill_shape(painter: &egui::Painter, c: Pos2, r: f32, shape: NodeShape, fill: Color32) {
     if shape == NodeShape::Circle {
         painter.circle_filled(c, r, fill);
-    } else {
-        painter.add(egui::Shape::convex_polygon(shape_pts(c, r, shape), fill, Stroke::NONE));
+        return;
     }
+    let ring = shape_pts(c, r, shape);
+    if ring.len() < 3 { return; }
+    let mut m = Mesh::default();
+    m.colored_vertex(c, fill);
+    for &pt in &ring { m.colored_vertex(pt, fill); }
+    let n = ring.len() as u32;
+    for i in 0..n { m.add_triangle(0, 1 + i, 1 + (i + 1) % n); }
+    painter.add(egui::Shape::mesh(m));
 }
 
 fn stroke_shape(painter: &egui::Painter, c: Pos2, r: f32, shape: NodeShape, stroke: Stroke) {

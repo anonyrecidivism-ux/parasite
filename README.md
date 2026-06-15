@@ -15,16 +15,35 @@ and in-process — no servers, no API keys, no telemetry.
 
 ---
 
-## Two modes
+## Four modes
 
-Switch between **◇ Graph** and **◎ GEOINT** in the top bar.
+Switch between **◇ Graph**, **◎ GEOINT**, **⏱ Monitor** and **🌐 ParasiteGoogle**
+in the top bar.
 
-### ◎ GEOINT — geospatial intelligence  ⚠️ *experimental / WIP*
-> **Heads-up:** GEOINT mode is **very buggy and unfinished** — expect rough edges,
-> jank and missing features. It's an early preview, not production-ready.
+### ⏱ Monitor — live crypto feed
+A **live transaction feed** — no addresses to enter. It streams recent **BTC,
+ETH & TON** transactions straight into a scrolling list, shows each one's value in
+coin and ≈USD, and lets you filter to only the big "whale" moves. Click a row to
+open it in a block explorer. A **PRICES · 24h** ticker tracks **rises (▲) and
+falls (▼)** across BTC, ETH, TON, **USDT**, SOL, XRP, BNB and DOGE. All via free,
+key-less public APIs.
 
+### 🌐 ParasiteGoogle — a real browser
+A **real, full web browser** built on **WebKitGTK** (the engine behind GNOME Web) —
+real JavaScript, CSS, images, the lot. It ships as its own `parasitegoogle` binary
+with a parasite-branded toolbar (logo + address bar + back/forward/reload). The
+ParasiteGoogle tab is a branded home screen that opens it, and **every "open in
+browser" action** across the graph and GEOINT launches it too.
+
+It runs as a **separate process on purpose**: a web engine needs its own GTK event
+loop and cannot share egui's, so keeping it out-of-process is what guarantees a
+slow or heavy page can never freeze or crash the main parasite window. *(Linux only
+— it uses the system `webkit2gtk-4.1`.)*
+
+### ◎ GEOINT — geospatial intelligence  *(beta)*
 A standalone geospatial workspace:
-- A live **slippy map** (OpenStreetMap tiles) — pan, zoom, click to drop points.
+- A live **slippy map** (OpenStreetMap **+ satellite**) — pan, smooth cursor-anchored
+  zoom, click to drop points, drag markers to move them.
 - **EXIF GPS extraction** from images — point a photo at it and parasite plots the
   location and shows camera make/model and capture time.
 - **Markers** with reverse geocoding (OpenStreetMap Nominatim), DMS coordinates,

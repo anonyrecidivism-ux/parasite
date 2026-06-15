@@ -9,6 +9,58 @@ them into **Beta 2**.
 
 ---
 
+## [1.0.0-beta.4] — Beta 4 — 2026-06-16
+
+The "real browser, real intel" release: a genuine embedded web browser, a live
+price ticker, and a big batch of new transforms & tool integrations.
+
+### Added — 🌐 ParasiteGoogle, a real embedded browser
+- A **real web browser** built on **WebKitGTK** (the engine behind GNOME Web) —
+  real JavaScript, CSS, images, video. Shipped as its own `parasitegoogle` binary
+  with a parasite-branded toolbar (logo, address bar, back / forward / reload).
+- It is **embedded into the ParasiteGoogle tab**: on Hyprland the browser window is
+  floated and tracked **exactly over the browser panel** so it reads as in-app,
+  while running **out-of-process** (a web engine needs its own GTK loop and cannot
+  share egui's). Falls back to a standalone window on other compositors.
+- **Theme-aware** — the browser chrome inherits the active parasite palette
+  (background, accent, text, borders) via the theme you've selected.
+- **Every "open in browser" action** across the graph & GEOINT now opens here.
+
+### Added — Monitor
+- **Price rises & falls** — a *PRICES · 24h* ticker showing each tracked coin's
+  price and 24-hour change (▲ green / ▼ red): BTC, ETH, **TON**, **USDT**, SOL,
+  XRP, BNB, DOGE.
+- **TON** added to the live transaction feed (toncenter) with its own filter.
+
+### Added — Transforms (now 99) & tool integrations
+- New key-less API transforms: **RapidDNS** subdomains, **RDAP** for domains & IPs
+  (registrar / netblock / org), **SPF** include parsing, **DMARC** policy,
+  **RIPEstat** BGP (announcing ASN, prefix & holder), **Keybase** identity proofs,
+  **GitLab** profile, **Hacker News** profile.
+- New GitHub CLI tool integrations (shell-out, like sherlock/subfinder):
+  **assetfinder**, **amass** (passive), **gau**, **httpx** (probe), **katana**
+  (crawl). `parasitephp --setup` now installs them via `go install`.
+
+### Fixed
+- **"Open in browser" links** no longer rely on a flaky `xdg-open`.
+- **"Application not responding" / freezes** — all compositor (Hyprland) I/O for the
+  browser overlay was moved to a **background thread**, so the egui UI thread is
+  never blocked waiting on `hyprctl`.
+- **OOM / fork-storm crash** — the old positioning failed silently on Hyprland's new
+  Lua API and span up an endless resize→reposition loop. Reworked to the new API,
+  hard-throttled, single-instance (a stray browser can never accumulate WebKit
+  processes), and killed cleanly on exit.
+- **Browser opening a stale site on startup / respawning when closed** — the browser
+  now opens only on an explicit click, clears its control file at launch, and closing
+  its window returns you to the launcher instead of relaunching.
+- Hardened a potential string-slice panic in the Monitor feed.
+
+### Repo
+- Stopped tracking scratch/export artifacts (`*.json`, `*.pdf`, `*.png`, `*.mp4`,
+  `*.txt`, `*.csv`, logs) and removed the committed `graph.mp4` / `johndoe.txt`.
+
+---
+
 ## [1.0.0-beta.3] — Beta 3 — 2026-06-14
 
 ### Added

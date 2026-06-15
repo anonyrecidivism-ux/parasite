@@ -1,14 +1,16 @@
 /target
 **/*.rs.bk
 
-# Runtime artifacts
+# Runtime / scratch / export artifacts — never commit these
 *.log
+*.json
+*.mp4
+*.pdf
+*.png
+*.csv
+*.txt
+graph.*
 results.json
 crawler_state.json
-graph.json
 config.json
-
-# export artifacts
-graph.png
-graph.pdf
 entities.csv

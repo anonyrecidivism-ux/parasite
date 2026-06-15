@@ -81,6 +81,13 @@ pub fn setup() {
     print_banner();
     println!("⇣  Installing OSINT tools (this can take a minute)…\n");
 
+    // Python is required for most tools (sherlock, maigret, holehe…).
+    if Command::new("python3").arg("--version").output().is_err() {
+        println!("⚠  Python 3 not found. Install it first:");
+        println!("     Arch: sudo pacman -S python python-pip");
+        println!("     Debian/Ubuntu: sudo apt install python3 python3-pip\n");
+    }
+
     // Python tools via pip (user site).
     let pip_tools = ["holehe", "maigret", "sherlock-project"];
     let pip = if Command::new("pip").arg("--version").output().is_ok() { "pip" } else { "pip3" };
@@ -96,7 +103,12 @@ pub fn setup() {
     // Go tools (optional) — only if `go` is present.
     if Command::new("go").arg("version").output().is_ok() {
         for t in ["github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest",
-                  "github.com/tomnomnom/waybackurls@latest"] {
+                  "github.com/tomnomnom/waybackurls@latest",
+                  "github.com/tomnomnom/assetfinder@latest",
+                  "github.com/lc/gau/v2/cmd/gau@latest",
+                  "github.com/projectdiscovery/httpx/cmd/httpx@latest",
+                  "github.com/projectdiscovery/katana/cmd/katana@latest",
+                  "github.com/owasp-amass/amass/v4/...@master"] {
             let short = t.rsplit('/').next().unwrap_or(t).split('@').next().unwrap_or(t);
             print!("  • {short} (go) … ");
             let _ = std::io::Write::flush(&mut std::io::stdout());
@@ -155,6 +167,11 @@ pub fn install(force: bool) -> std::io::Result<String> {
         let engine = dir.join("parasite");
         if engine.exists() {
             let _ = fs::copy(&engine, inst_dir.join("parasite"));
+        }
+        // the real ParasiteGoogle browser, so "open in browser" works from the menu copy
+        let browser = dir.join("parasitegoogle");
+        if browser.exists() {
+            let _ = fs::copy(&browser, inst_dir.join("parasitegoogle"));
         }
     }
 

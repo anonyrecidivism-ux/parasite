@@ -46,6 +46,7 @@ pub struct GeoPanel {
     add_label: String,
     exif_path: String,
     map_rect:  Rect,
+    drag_marker: Option<usize>,
     log:       Vec<String>,
 }
 
@@ -99,7 +100,7 @@ impl GeoPanel {
             tiles: HashMap::new(), inflight: HashSet::new(), rt, tx, rx, client,
             satellite: false,
             add_lat: String::new(), add_lon: String::new(), add_label: String::new(),
-            exif_path: String::new(), map_rect: Rect::NOTHING,
+            exif_path: String::new(), map_rect: Rect::NOTHING, drag_marker: None,
             log: vec!["◦  add a point, import an image's EXIF, or pan the map".into()],
         }
     }
@@ -232,7 +233,7 @@ impl GeoPanel {
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("◎ GEOINT").color(accent()).strong().size(13.0));
-                    ui.label(RichText::new("⚠ experimental / WIP").color(c_warn()).size(10.5).italics());
+                    ui.label(RichText::new("beta").color(text_mut()).size(10.5).italics());
                     ui.add_space(10.0);
                     ui.label(RichText::new(format!("{:.5}, {:.5}  ·  z{:.1}",
                         self.center_lat, self.center_lon, self.zoom)).color(text_sec()).size(12.0));
@@ -408,24 +409,67 @@ impl GeoPanel {
                 let painter = ui.painter_at(rect);
                 painter.rect_filled(rect, Rounding::same(round), bg_canvas());
 
-                // scroll → smooth continuous zoom (fractional; tiles are scaled)
+                // screen → geo helper for the current view
+                let screen_to_geo = |sp: Pos2, lat: f64, lon: f64, zoom: f32| -> (f64, f64) {
+                    let iz = zoom.floor().clamp(2.0, 19.0) as u8;
+                    let scale = 2f64.powf((zoom - iz as f32) as f64);
+                    let (cwx, cwy) = world_px(lat, lon, iz);
+                    let wx = cwx + (sp.x - rect.center().x) as f64 / scale;
+                    let wy = cwy + (sp.y - rect.center().y) as f64 / scale;
+                    px_to_lonlat(wx, wy, iz)
+                };
+
+                // scroll → smooth zoom, anchored under the cursor
                 if resp.hovered() {
                     let sc = ui.input(|i| i.smooth_scroll_delta.y);
                     if sc != 0.0 {
+                        let cur = ui.input(|i| i.pointer.hover_pos()).unwrap_or(rect.center());
+                        let (glat, glon) = screen_to_geo(cur, self.center_lat, self.center_lon, self.zoom);
                         self.zoom = (self.zoom + sc * map_sensitivity() * 0.01).clamp(2.0, 19.0);
+                        // move the centre so (glat,glon) stays under the cursor
+                        let iz = self.zoom.floor().clamp(2.0, 19.0) as u8;
+                        let scale = 2f64.powf((self.zoom - iz as f32) as f64);
+                        let (gwx, gwy) = world_px(glat, glon, iz);
+                        let cwx = gwx - (cur.x - rect.center().x) as f64 / scale;
+                        let cwy = gwy - (cur.y - rect.center().y) as f64 / scale;
+                        let (nlat, nlon) = px_to_lonlat(cwx, cwy, iz);
+                        self.center_lat = nlat.clamp(-85.0, 85.0);
+                        self.center_lon = ((nlon + 180.0).rem_euclid(360.0)) - 180.0;
                         ctx.request_repaint();
                     }
                 }
                 let iz = self.zoom.floor().clamp(2.0, 19.0) as u8;
                 let scale = 2f64.powf((self.zoom - iz as f32) as f64); // 1.0 .. 2.0
-
                 let (cwx, cwy) = world_px(self.center_lat, self.center_lon, iz);
-                // drag → pan (delta in screen px, divided by the current scale)
+
+                // pick up a marker on drag-start, else pan
+                if resp.drag_started() {
+                    if let Some(cur) = ui.input(|i| i.pointer.interact_pos()) {
+                        self.drag_marker = self.points.iter().position(|p| {
+                            let (wx, wy) = world_px(p.lat, p.lon, iz);
+                            let sp = Pos2::new(rect.center().x + ((wx - cwx) * scale) as f32,
+                                               rect.center().y + ((wy - cwy) * scale) as f32 - 9.0);
+                            sp.distance(cur) < 12.0
+                        });
+                        if let Some(i) = self.drag_marker { self.selected = Some(i); }
+                    }
+                }
+                if resp.drag_stopped() { self.drag_marker = None; }
+
                 if resp.dragged() {
                     let d = resp.drag_delta();
-                    let (nlat, nlon) = px_to_lonlat(cwx - d.x as f64 / scale, cwy - d.y as f64 / scale, iz);
-                    self.center_lat = nlat.clamp(-85.0, 85.0);
-                    self.center_lon = ((nlon + 180.0).rem_euclid(360.0)) - 180.0;
+                    if let Some(i) = self.drag_marker {
+                        // move the marker to follow the cursor
+                        if let Some(cur) = ui.input(|i| i.pointer.interact_pos()) {
+                            let (la, lo) = screen_to_geo(cur, self.center_lat, self.center_lon, self.zoom);
+                            if let Some(p) = self.points.get_mut(i) { p.lat = la; p.lon = lo; }
+                        }
+                    } else {
+                        // pan
+                        let (nlat, nlon) = px_to_lonlat(cwx - d.x as f64 / scale, cwy - d.y as f64 / scale, iz);
+                        self.center_lat = nlat.clamp(-85.0, 85.0);
+                        self.center_lon = ((nlon + 180.0).rem_euclid(360.0)) - 180.0;
+                    }
                 }
                 let (cwx, cwy) = world_px(self.center_lat, self.center_lon, iz);
 
@@ -459,13 +503,23 @@ impl GeoPanel {
                 }
                 for k in wanted { self.request_tile(k); }
 
-                // click → drop point
+                // click → select an existing marker, else drop a new point
                 if resp.clicked() {
                     if let Some(pp) = ui.input(|i| i.pointer.interact_pos()) {
-                        let wx = cwx + (pp.x - rect.center().x) as f64 / scale;
-                        let wy = cwy + (pp.y - rect.center().y) as f64 / scale;
-                        let (la, lo) = px_to_lonlat(wx, wy, iz);
-                        self.add_point(la, lo, format!("pin {}", self.points.len() + 1), vec![]);
+                        let hit = self.points.iter().position(|p| {
+                            let (wx, wy) = world_px(p.lat, p.lon, iz);
+                            let sp = Pos2::new(rect.center().x + ((wx - cwx) * scale) as f32,
+                                               rect.center().y + ((wy - cwy) * scale) as f32 - 9.0);
+                            sp.distance(pp) < 12.0
+                        });
+                        if let Some(i) = hit {
+                            self.selected = Some(i);
+                        } else {
+                            let wx = cwx + (pp.x - rect.center().x) as f64 / scale;
+                            let wy = cwy + (pp.y - rect.center().y) as f64 / scale;
+                            let (la, lo) = px_to_lonlat(wx, wy, iz);
+                            self.add_point(la, lo, format!("pin {}", self.points.len() + 1), vec![]);
+                        }
                     }
                 }
 

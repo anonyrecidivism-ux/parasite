@@ -189,6 +189,8 @@ impl GraphPanel {
         s
     }
 
+    pub fn recording(&self) -> bool { self.recording.is_some() }
+
     fn log(&mut self, msg: impl Into<String>) {
         let m = msg.into();
         let c = if m.contains('✗') { c_err() }
@@ -612,10 +614,13 @@ impl GraphPanel {
         self.details_panel(ctx);
         self.log_panel(ctx);
         self.canvas_panel(ctx);
-        self.context_menu(ctx);
-        self.table_window(ctx);
-        self.add_window(ctx);
-        self.analytics_window(ctx);
+        // hide floating windows while recording so they don't appear in the video
+        if self.recording.is_none() {
+            self.context_menu(ctx);
+            self.table_window(ctx);
+            self.add_window(ctx);
+            self.analytics_window(ctx);
+        }
     }
 
     /// Graph analytics — degree centrality, connected components, density…
@@ -1349,6 +1354,9 @@ impl GraphPanel {
                 self.canvas_rect = ui.available_rect_before_wrap();
                 if self.needs_fit {
                     self.view.fit(&self.graph, self.canvas_rect);
+                    // extra margin while recording so no node sits at the very edge
+                    // (and the watermark never covers one)
+                    if self.recording.is_some() { self.view.zoom *= 0.80; }
                     self.needs_fit = false;
                 }
                 let action = canvas::draw(ui, &mut self.graph, &mut self.view, &mut self.sel);
@@ -1616,13 +1624,8 @@ fn harvest(text: &str) -> Vec<transforms::NewItem> {
 
 /// Open a URL in the system browser (Linux/macOS/Windows).
 fn open_url(url: &str) {
-    let url = url.to_string();
-    #[cfg(target_os = "linux")]
-    let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
-    #[cfg(target_os = "macos")]
-    let _ = std::process::Command::new("open").arg(&url).spawn();
-    #[cfg(target_os = "windows")]
-    let _ = std::process::Command::new("cmd").args(["/C", "start", "", &url]).spawn();
+    // route through the built-in ParasiteGoogle browser
+    super::app_open(url);
 }
 
 fn kind_from_name(name: &str) -> Option<Kind> {
