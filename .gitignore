@@ -14,3 +14,8 @@ results.json
 crawler_state.json
 config.json
 entities.csv
+
+# user reference assets (not part of the build)
+photo_*.jpg
+photo_*.jpeg
+parasite_logo_v5.svg

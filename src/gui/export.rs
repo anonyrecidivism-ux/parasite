@@ -12,6 +12,17 @@ pub fn save_png(path: &str, rgba: &[u8], w: u32, h: u32) -> io::Result<()> {
     image::save_buffer(path, rgba, w, h, image::ExtendedColorType::Rgba8).map_err(to_io)
 }
 
+/// Fast, low-compression PNG — for throwaway video frames where encode speed
+/// matters far more than file size (the default encoder is ~5× slower).
+pub fn save_png_fast(path: &str, rgba: &[u8], w: u32, h: u32) -> io::Result<()> {
+    use image::codecs::png::{PngEncoder, CompressionType, FilterType};
+    use image::ImageEncoder;
+    let file = std::io::BufWriter::new(std::fs::File::create(path)?);
+    PngEncoder::new_with_quality(file, CompressionType::Fast, FilterType::NoFilter)
+        .write_image(rgba, w, h, image::ExtendedColorType::Rgba8)
+        .map_err(to_io)
+}
+
 /// Save RGBA pixels as a single-page PDF (image embedded as JPEG / DCTDecode).
 pub fn save_pdf(path: &str, rgba: &[u8], w: u32, h: u32) -> io::Result<()> {
     // RGBA → RGB

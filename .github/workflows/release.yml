@@ -1,0 +1,101 @@
+name: release
+
+# Builds parasite for Linux, macOS (Intel + Apple Silicon) and Windows.
+# Trigger by pushing a tag like `v1.0.0`, or run manually from the Actions tab.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            name: parasite-linux-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            name: parasite-macos-arm64
+          - os: macos-13
+            target: x86_64-apple-darwin
+            name: parasite-macos-x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: parasite-windows-x86_64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # Linux pulls in the GTK/WebKit deps (only used by the Linux-only browser
+      # binary, but they are crate-level deps on this platform) + GL for eframe.
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-3-dev libwebkit2gtk-4.1-dev libglib2.0-dev \
+            libgl1-mesa-dev libxkbcommon-dev pkg-config
+
+      # The GUI (`parasitephp`) and engine (`parasite`) are fully cross-platform.
+      # The WebKitGTK browser (`parasitegoogle`) is Linux-only and built only there.
+      - name: Build (Linux — incl. browser)
+        if: runner.os == 'Linux'
+        run: cargo build --release --target ${{ matrix.target }}
+             --bin parasitephp --bin parasite --bin parasitegoogle
+
+      - name: Build (macOS / Windows)
+        if: runner.os != 'Linux'
+        run: cargo build --release --target ${{ matrix.target }}
+             --bin parasitephp --bin parasite
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          BIN=target/${{ matrix.target }}/release
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp "$BIN/parasitephp.exe" dist/
+            cp "$BIN/parasite.exe"    dist/
+          else
+            cp "$BIN/parasitephp" dist/
+            cp "$BIN/parasite"    dist/
+            [ -f "$BIN/parasitegoogle" ] && cp "$BIN/parasitegoogle" dist/ || true
+          fi
+          cp README.md dist/ 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: dist/*
+
+  # Attach all platform builds to the GitHub Release when triggered by a tag.
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Zip per-platform bundles
+        run: |
+          cd artifacts
+          for d in */; do (cd "$d" && zip -r "../${d%/}.zip" .); done
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*.zip
+          generate_release_notes: true

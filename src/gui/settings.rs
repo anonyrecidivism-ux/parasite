@@ -4,12 +4,14 @@
 use eframe::egui::{self, Color32};
 use serde::{Deserialize, Serialize};
 
+use super::i18n::{self, Lang};
 use super::keys::{self, ApiKeys};
-use super::theme::{self, BgStyle, NodeShape, NodeStyle, UiConfig, UiVariant};
+use super::theme::{self, BgStyle, Design, NodeShape, NodeStyle, UiConfig, UiVariant};
 
 fn d_shape() -> NodeShape  { NodeShape::Circle }
 fn d_bg()    -> BgStyle    { BgStyle::Grid }
 fn d_var()   -> UiVariant  { UiVariant::Standard }
+fn d_design()-> Design     { Design::Cupertino }
 fn d_style() -> NodeStyle  { NodeStyle::Flat }
 fn d_sens()  -> f32        { 0.6 }
 
@@ -46,8 +48,31 @@ pub struct Settings {
     pub map_sensitivity: f32,
     #[serde(default)]
     pub api:         ApiKeys,
+    #[serde(default)]
+    pub lang:        Lang,
+    #[serde(default)]
+    pub glow:        bool,
+    #[serde(default = "d_true")]
+    pub animations:  bool,
+    #[serde(default = "d_one")]
+    pub anim_speed:  f32,
+    // network policy
+    #[serde(default)]
+    pub proxy:       String,
+    #[serde(default = "d_ddg")]
+    pub search_engine: String,
+    #[serde(default)]
+    pub block_http:  bool,
+    /// path to a custom UI font (.ttf/.otf); empty = bundled DejaVu
+    #[serde(default)]
+    pub font_path:   String,
+    #[serde(default = "d_design")]
+    pub design:      Design,
     pub welcomed:    bool,
 }
+
+fn d_one() -> f32 { 1.0 }
+fn d_ddg() -> String { "duckduckgo".into() }
 
 fn d_ew()   -> f32  { 1.3 }
 fn d_ls()   -> f32  { 12.0 }
@@ -74,6 +99,15 @@ impl Default for Settings {
             node_style: NodeStyle::Flat,
             map_sensitivity: 0.6,
             api: ApiKeys::default(),
+            lang: Lang::default(),
+            glow: false,
+            animations: true,
+            anim_speed: 1.0,
+            proxy: String::new(),
+            search_engine: "duckduckgo".into(),
+            block_http: false,
+            font_path: String::new(),
+            design: Design::Cupertino,
             welcomed: false,
         }
     }
@@ -105,7 +139,10 @@ impl Settings {
     /// Resolve the effective palette (preset + accent override) and push it,
     /// along with the UI config, into the theme module, then repaint visuals.
     pub fn apply(&self, ctx: &egui::Context) {
-        let mut pal = theme::theme_by_name(&self.theme);
+        theme::set_design(self.design);
+        // the retro design pins its own palette; otherwise the theme drives colours
+        let mut pal = self.design.forces_palette()
+            .unwrap_or_else(|| theme::theme_by_name(&self.theme));
         if let Some([r, g, b]) = self.accent {
             pal.accent = Color32::from_rgb(r, g, b);
             pal.accent_dark = scale(pal.accent, 0.62);
@@ -128,8 +165,13 @@ impl Settings {
             map_sensitivity: self.map_sensitivity.clamp(0.15, 2.5),
             bg_style:    self.bg_style,
             variant:     self.variant,
+            glow:        self.glow,
+            animations:  self.animations,
+            anim_speed:  self.anim_speed.clamp(0.25, 3.0),
         });
         keys::set(self.api.clone());
+        i18n::set_lang(self.lang);
+        super::net::set(self.proxy.clone(), self.search_engine.clone(), self.block_http);
         theme::apply(ctx);
     }
 }

@@ -91,7 +91,7 @@ impl GeoPanel {
         let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(3).enable_all().build()
             .expect("geo runtime");
         let (tx, rx) = std::sync::mpsc::channel();
-        let client = reqwest::Client::builder()
+        let client = super::net::builder()
             .user_agent("parasite-geoint/1.0 (OSINT tool)")
             .build().unwrap();
         Self {
@@ -238,7 +238,7 @@ impl GeoPanel {
                     ui.label(RichText::new(format!("{:.5}, {:.5}  ·  z{:.1}",
                         self.center_lat, self.center_lon, self.zoom)).color(text_sec()).size(12.0));
                     ui.add_space(10.0);
-                    if geobtn(ui, if self.satellite { "🛰 Satellite" } else { "🗺 Street" }).clicked() {
+                    if geobtn(ui, if self.satellite { "◎ Satellite" } else { "▦ Street" }).clicked() {
                         self.satellite = !self.satellite;
                         self.tiles.clear();
                         self.inflight.clear();
@@ -270,7 +270,7 @@ impl GeoPanel {
                 });
                 ui.add(TextEdit::singleline(&mut self.add_label).hint_text("label").desired_width(f32::INFINITY));
                 if ui.add_sized([ui.available_width(), 26.0], egui::Button::new(
-                    RichText::new("＋ Add").color(Color32::WHITE).strong())
+                    RichText::new("+ Add").color(Color32::WHITE).strong())
                     .fill(accent()).rounding(Rounding::same(5.0))).clicked()
                 {
                     if let (Ok(la), Ok(lo)) = (self.add_lat.trim().parse(), self.add_lon.trim().parse()) {
@@ -286,7 +286,7 @@ impl GeoPanel {
                 ui.add(TextEdit::singleline(&mut self.exif_path).hint_text("/path/to/photo.jpg")
                     .desired_width(f32::INFINITY).font(FontId::new(12.0, FontFamily::Monospace)));
                 if ui.add_sized([ui.available_width(), 26.0], egui::Button::new(
-                    RichText::new("⛏ Extract GPS & metadata").color(text_pri()).size(12.0))
+                    RichText::new("⚙ Extract GPS & metadata").color(text_pri()).size(12.0))
                     .stroke(Stroke::new(1.0, border())).rounding(Rounding::same(5.0))).clicked()
                 {
                     let p = self.exif_path.clone();

@@ -97,6 +97,9 @@ pub fn draw(
     graph: &mut Graph,
     view: &mut View,
     sel: &mut Selection,
+    images: &std::collections::HashMap<u64, egui::TextureHandle>,
+    risk: &std::collections::HashMap<u64, u8>,
+    filter: &str,
 ) -> CanvasAction {
     let mut action = CanvasAction::default();
 
@@ -239,8 +242,11 @@ pub fn draw(
     }
 
     // ── Spawn-animation clock (also drives edge draw-in) ──────────────────────
+    // While recording a video the clock is driven by a virtual timestep (one
+    // fixed step per captured frame) so the motion is perfectly smooth in the
+    // output regardless of how slow the screenshot capture is.
     const SPAWN_DUR: f64 = 0.45;
-    let now = ui.input(|i| i.time);
+    let now = render_time().unwrap_or_else(|| ui.input(|i| i.time));
     for e in graph.entities.values_mut() {
         if e.anim_start.is_none() { e.anim_start = Some(now); }
     }
@@ -250,59 +256,72 @@ pub fn draw(
             .unwrap_or(1.0)
     };
 
-    // ── Draw edges ─────────────────────────────────────────────────────────────
-    let curved = edge_curved();
+    // ── Draw edges (tinted link, filled arrowhead, label pill) ──────────────────
+    let maltego = design() == Design::Maltego;
+    let curved = edge_curved() || maltego; // classic Maltego uses organic curved links
+    let nr = node_radius() * view.zoom;
     for (ei, edge) in graph.edges.iter().enumerate() {
         let (Some(a), Some(b)) = (graph.entities.get(&edge.from), graph.entities.get(&edge.to)) else { continue };
         if !finite(a.pos) || !finite(b.pos) { continue; }
         let pa = view.w2s(center, a.pos);
         let pb = view.w2s(center, b.pos);
-        let estroke = if sel.edge == Some(ei) {
-            Stroke::new((edge_width() + 1.5).max(2.5), accent())
-        } else {
-            Stroke::new(edge_width(), border())
-        };
+        let selected = sel.edge == Some(ei);
+        // Maltego: neutral grey links; otherwise tint by destination kind
+        let ecol = if selected { accent() }
+                   else if maltego { blend(border(), text_mut(), 0.35) }
+                   else { blend(border(), b.kind.color(), 0.5) };
+        let ew = if selected { (edge_width() + 1.4).max(2.4) } else { (edge_width() + 0.2).max(1.1) };
+        let estroke = Stroke::new(ew, ecol);
 
         let ep = node_prog(edge.to).max(0.02); // edge grows in as the child appears
         let (mid, dir) = if curved {
-            // quadratic curve: control point offset perpendicular to the chord
             let chord = pb - pa;
             let perp = Vec2::new(-chord.y, chord.x).normalized();
             let ctrl = pa + chord * 0.5 + perp * (chord.length() * 0.16);
-            let steps = (12.0 * ep).ceil().max(1.0) as usize;
+            let steps = (16.0 * ep).ceil().max(1.0) as usize;
             let mut pts = Vec::with_capacity(steps + 1);
             for i in 0..=steps {
-                let t = (i as f32 / 12.0).min(ep);
+                let t = (i as f32 / 16.0).min(ep);
                 let u = 1.0 - t;
                 pts.push((pa.to_vec2() * (u * u) + ctrl.to_vec2() * (2.0 * u * t) + pb.to_vec2() * (t * t)).to_pos2());
             }
-            painter.add(egui::Shape::line(pts.clone(), estroke));
-            (ctrl, (pb - pa).normalized())
+            painter.add(egui::Shape::line(pts, estroke));
+            (ctrl, (pb - ctrl).normalized())
         } else {
             let pb_a = pa + (pb - pa) * ep;
             painter.line_segment([pa, pb_a], estroke);
             (pa + (pb - pa) * 0.5, (pb - pa).normalized())
         };
 
-        // arrow head near b — only once the edge has fully drawn in
-        if ep > 0.96 {
-            let tip = pb - dir * (node_radius() * view.zoom + 2.0);
+        // filled triangular arrowhead near b — only once the edge has drawn in
+        if ep > 0.94 && dir.length() > 0.0 {
+            let tip = pb - dir * (nr + 2.5);
             let perp = Vec2::new(-dir.y, dir.x);
-            let s = 6.0 * view.zoom.clamp(0.6, 1.4);
-            painter.line_segment([tip, tip - dir * s + perp * s * 0.6], estroke);
-            painter.line_segment([tip, tip - dir * s - perp * s * 0.6], estroke);
+            let s = 8.0 * view.zoom.clamp(0.65, 1.4);
+            let p1 = tip - dir * s + perp * s * 0.5;
+            let p2 = tip - dir * s - perp * s * 0.5;
+            painter.add(egui::Shape::convex_polygon(vec![tip, p1, p2], ecol, Stroke::NONE));
         }
-        if ep > 0.96 && edge_labels() && view.zoom > 0.7 && !edge.label.is_empty() {
-            painter.text(mid, egui::Align2::CENTER_CENTER, &edge.label,
+        if ep > 0.94 && edge_labels() && view.zoom > 0.7 && !edge.label.is_empty() {
+            let g = painter.layout_no_wrap(edge.label.clone(),
                 FontId::new(9.5, FontFamily::Proportional), text_mut());
+            let sz = g.size();
+            let lp = Pos2::new(mid.x - sz.x / 2.0, mid.y - sz.y / 2.0);
+            let lbg = bg_app();
+            painter.rect_filled(Rect::from_min_size(lp - Vec2::new(4.0, 1.5), sz + Vec2::new(8.0, 3.0)),
+                Rounding::same(7.0), Color32::from_rgba_unmultiplied(lbg.r(), lbg.g(), lbg.b(), 220));
+            painter.galley(lp, g, text_mut());
         }
     }
 
     // ── Draw nodes ─────────────────────────────────────────────────────────────
     let r = node_radius() * view.zoom;
     let label_font = FontId::new((label_size() * view.zoom).clamp(8.0, 22.0), FontFamily::Proportional);
-    let icon_font  = FontId::new((18.0 * view.zoom).clamp(11.0, 24.0), FontFamily::Proportional);
+    // Maltego makes the type icon the focal point → larger glyph
+    let icon_px = if design() == Design::Maltego { 24.0 } else { 18.0 };
+    let icon_font  = FontId::new((icon_px * view.zoom).clamp(11.0, 30.0), FontFamily::Proportional);
     let icons_on   = show_icons();
+    let maltego_nodes = design() == Design::Maltego;
 
     // optional cluster colouring (by connected component)
     let comp: std::collections::HashMap<u64, usize> = if color_clusters() {
@@ -320,21 +339,35 @@ pub fn draw(
         let p = view.w2s(center, e.pos);
         if !rect.expand(60.0).contains(p) { continue; }
 
-        // spawn-in scale (ease-out-back overshoot)
-        let prog = ((now - e.anim_start.unwrap_or(now)) / SPAWN_DUR).clamp(0.0, 1.0) as f32;
+        // spawn-in scale (ease-out-back overshoot) — skipped when animations are off,
+        // sped up/slowed by the animation-speed setting
+        let prog = if animations() {
+            ((now - e.anim_start.unwrap_or(now)) * anim_speed() as f64 / SPAWN_DUR).clamp(0.0, 1.0) as f32
+        } else { 1.0 };
         if prog < 1.0 { animating = true; }
         let grow = ease_out_back(prog);
         let r = r * grow;
         let grown = prog > 0.55;
+
+        // graph filter: dim (and skip) nodes that don't match the query
+        if !filter.is_empty()
+            && !e.value.to_lowercase().contains(filter)
+            && !e.kind.label().to_lowercase().contains(filter)
+        {
+            painter.circle_filled(p, r * 0.5, rgba(e.kind.color(), 24));
+            continue;
+        }
 
         let is_sel = sel.contains(id);
         let is_primary = sel.primary == Some(id);
         let is_hov = hit == Some(id);
         let col = if let Some(&c) = comp.get(&id) { cluster_color(c) } else { e.kind.color() };
 
-        let shape = match node_shape() {
-            NodeShape::ByType => shape_for_kind(e.kind),
-            other => other,
+        // Cupertino & Maltego designs use uniform round nodes; else per config.
+        let shape = if matches!(design(), Design::Cupertino | Design::Maltego) {
+            NodeShape::Circle
+        } else {
+            match node_shape() { NodeShape::ByType => shape_for_kind(e.kind), other => other }
         };
         if is_sel {
             fill_shape(&painter, p, r + 5.0, shape, Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), 40));
@@ -342,15 +375,58 @@ pub fn draw(
         } else if is_hov {
             stroke_shape(&painter, p, r + 3.0, shape, Stroke::new(1.5, accent_dark()));
         }
-        draw_node_body(&painter, p, r, shape, col, node_style());
-        if icons_on && grown {
-            painter.text(p, egui::Align2::CENTER_CENTER, e.kind.icon(), icon_font.clone(), col);
+        // Instinct risk ring (deterministic risk 0-100 → amber→red)
+        let rk = risk.get(&id).copied().unwrap_or(0);
+        if rk >= 20 && grown {
+            stroke_shape(&painter, p, r + 6.5, shape, Stroke::new(2.4, risk_color(rk)));
+        }
+        // optional soft glow halo behind the node
+        if glow() {
+            for (rr, a) in [(r * 2.2, 16u8), (r * 1.7, 26), (r * 1.35, 40)] {
+                painter.circle_filled(p, rr, Color32::from_rgba_unmultiplied(col.r(), col.g(), col.b(), a));
+            }
+        }
+
+        // Maltego renders locations as a red map-pin (very recognisable).
+        if maltego_nodes && matches!(e.kind, super::model::Kind::Location | super::model::Kind::Coordinate) {
+            draw_pin(&painter, p, r);
+            // (label + markers below still apply)
+        } else
+        // an attached image is rendered as a disc on the node face (clipped round);
+        // otherwise the usual shaped body + kind glyph.
+        if let Some(tex) = images.get(&id).filter(|_| grown) {
+            draw_node_body(&painter, p, r, shape, col, node_style());
+            let d = Rect::from_center_size(p, Vec2::splat(r * 1.9));
+            let mut rs = egui::epaint::RectShape::filled(d, Rounding::same(r), Color32::WHITE);
+            rs.fill_texture_id = tex.id();
+            rs.uv = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0));
+            painter.add(rs);
+            stroke_shape(&painter, p, r, shape, Stroke::new(1.5, col));
+        } else {
+            draw_node_body(&painter, p, r, shape, col, node_style());
+            if icons_on && grown {
+                if maltego_nodes {
+                    // exact Maltego-style vector pictogram per entity type
+                    maltego_icon(&painter, p, r * 0.6, e.kind, col);
+                } else {
+                    painter.text(p, egui::Align2::CENTER_CENTER, e.kind.icon(), icon_font.clone(), col);
+                }
+            }
         }
         // flag badge (top-right)
         if let Some(fc) = super::model::flag_color(e.flag) {
             let bp = p + Vec2::new(r * 0.72, -r * 0.72);
             painter.circle_filled(bp, (r * 0.28).max(3.0), fc);
             painter.circle_stroke(bp, (r * 0.28).max(3.0), Stroke::new(1.0, bg_panel()));
+        }
+        // Maltego-style note marker (a small yellow page on the right of the icon)
+        if maltego_nodes && grown && !e.note.is_empty() {
+            let np = p + Vec2::new(r * 0.74, r * 0.2);
+            let s = (r * 0.26).max(3.0);
+            painter.rect_filled(Rect::from_center_size(np, Vec2::splat(s * 1.4)),
+                Rounding::same(1.0), Color32::from_rgb(245, 214, 90));
+            painter.rect_stroke(Rect::from_center_size(np, Vec2::splat(s * 1.4)),
+                Rounding::same(1.0), Stroke::new(1.0, Color32::from_rgb(150, 120, 20)));
         }
 
         if grown && node_labels() && view.zoom > 0.45 {
@@ -359,19 +435,31 @@ pub fn draw(
                 if v.chars().count() > 28 { format!("{}…", v.chars().take(27).collect::<String>()) }
                 else { v.clone() }
             };
-            let galley = painter.layout_no_wrap(label, label_font.clone(),
-                if is_sel { text_pri() } else { text_sec() });
+            let lcol = if maltego_nodes { text_pri() } else if is_sel { text_pri() } else { text_sec() };
+            let galley = painter.layout_no_wrap(label, label_font.clone(), lcol);
             let sz = galley.size();
             let lp = Pos2::new(p.x - sz.x / 2.0, p.y + r + 5.0);
-            let lbg = bg_output();
-            painter.rect_filled(
-                Rect::from_min_size(lp - Vec2::new(5.0, 2.0), sz + Vec2::new(10.0, 4.0)),
-                Rounding::same(3.0),
-                Color32::from_rgba_unmultiplied(lbg.r(), lbg.g(), lbg.b(), 210),
-            );
-            painter.galley(lp, galley, text_sec());
+            // Maltego shows plain dark labels (no chip); other designs use a chip for contrast
+            if !maltego_nodes {
+                let lbg = bg_output();
+                painter.rect_filled(
+                    Rect::from_min_size(lp - Vec2::new(5.0, 2.0), sz + Vec2::new(10.0, 4.0)),
+                    Rounding::same(3.0),
+                    Color32::from_rgba_unmultiplied(lbg.r(), lbg.g(), lbg.b(), 210),
+                );
+            }
+            painter.galley(lp, galley, lcol);
         }
     }
+
+    // Maltego-style entity/link count, bottom-right of the canvas
+    let count = format!("{} entities · {} links", graph.entities.len(), graph.edges.len());
+    let gz = painter.layout_no_wrap(count, FontId::new(11.0, FontFamily::Proportional), text_mut());
+    let gp = Pos2::new(rect.max.x - gz.size().x - 12.0, rect.max.y - gz.size().y - 8.0);
+    let bg = bg_app();
+    painter.rect_filled(Rect::from_min_size(gp - Vec2::new(6.0, 3.0), gz.size() + Vec2::new(12.0, 6.0)),
+        Rounding::same(4.0), Color32::from_rgba_unmultiplied(bg.r(), bg.g(), bg.b(), 200));
+    painter.galley(gp, gz, text_mut());
 
     // keep animating the spawn-in
     if animating { ui.ctx().request_repaint(); }
@@ -434,6 +522,109 @@ fn node_at(graph: &Graph, view: &View, center: Pos2, p: Pos2) -> Option<u64> {
 
 /// A small overview map in the bottom-right corner of `area`, showing all nodes
 /// and the current viewport rectangle.
+/// Draw a Maltego-style vector pictogram for an entity kind, centred at `c`,
+/// half-size `s`, in colour `col`. Replaces glyphs in the Retro/Maltego design so
+/// every entity type has a recognisable figure.
+fn maltego_icon(painter: &egui::Painter, c: Pos2, s: f32, kind: super::model::Kind, col: Color32) {
+    use super::model::Kind::*;
+    let w = (s * 0.16).max(1.5);
+    let st = Stroke::new(w, col);
+    let pt = |x: f32, y: f32| Pos2::new(c.x + x * s, c.y + y * s);
+    let line = |a: Pos2, b: Pos2| painter.line_segment([a, b], st);
+    let poly = |pts: Vec<Pos2>| { painter.add(egui::Shape::closed_line(pts, st)); };
+
+    let globe = || {
+        painter.circle_stroke(c, s, st);
+        line(pt(-1.0, 0.0), pt(1.0, 0.0));
+        // two meridians (thin vertical ellipses approximated by polylines)
+        for sx in [0.5_f32, -0.5] {
+            let pts: Vec<Pos2> = (0..=10).map(|i| {
+                let t = i as f32 / 10.0; let a = std::f32::consts::PI * (t - 0.5);
+                pt(sx * a.cos(), (a).sin())
+            }).collect();
+            painter.add(egui::Shape::line(pts, Stroke::new(w * 0.8, col)));
+        }
+        line(pt(0.0, -1.0), pt(0.0, 1.0));
+    };
+    let monitor = || {
+        poly(vec![pt(-1.0, -0.7), pt(1.0, -0.7), pt(1.0, 0.45), pt(-1.0, 0.45)]);
+        line(pt(-0.35, 0.45), pt(-0.5, 0.9)); line(pt(0.35, 0.45), pt(0.5, 0.9));
+        line(pt(-0.55, 0.9), pt(0.55, 0.9));
+    };
+    let person = || {
+        painter.circle_stroke(pt(0.0, -0.45), s * 0.42, st);
+        let pts: Vec<Pos2> = (0..=12).map(|i| {
+            let t = i as f32 / 12.0; let a = std::f32::consts::PI * t;
+            pt(0.85 * a.cos(), 0.95 - 0.55 * a.sin())
+        }).collect();
+        painter.add(egui::Shape::line(pts, st));
+        ()
+    };
+    let page = |fold: bool| {
+        poly(vec![pt(-0.7, -1.0), pt(0.4, -1.0), pt(0.7, -0.6), pt(0.7, 1.0), pt(-0.7, 1.0)]);
+        if fold { line(pt(0.4, -1.0), pt(0.4, -0.6)); line(pt(0.4, -0.6), pt(0.7, -0.6)); }
+        for y in [-0.35_f32, 0.05, 0.45] { line(pt(-0.45, y), pt(0.45, y)); }
+    };
+
+    match kind {
+        Domain | Website => globe(),
+        Ip | OperatingSystem | Netblock => monitor(),
+        Email => { poly(vec![pt(-1.0,-0.6), pt(1.0,-0.6), pt(1.0,0.6), pt(-1.0,0.6)]);
+                   line(pt(-1.0,-0.6), pt(0.0,0.15)); line(pt(1.0,-0.6), pt(0.0,0.15)); }
+        Phone => { poly(vec![pt(-0.5,-1.0), pt(0.5,-1.0), pt(0.5,1.0), pt(-0.5,1.0)]);
+                   line(pt(-0.25,-0.75), pt(0.25,-0.75)); painter.circle_filled(pt(0.0,0.72), w, col); }
+        Person | Username | Social => person(),
+        Organization => { poly(vec![pt(-0.8,-1.0), pt(0.8,-1.0), pt(0.8,1.0), pt(-0.8,1.0)]);
+                          for yy in [-0.6_f32,-0.1,0.4] { for xx in [-0.4_f32,0.4] {
+                              painter.rect_stroke(Rect::from_center_size(pt(xx,yy), egui::vec2(s*0.28,s*0.28)), Rounding::ZERO, Stroke::new(w*0.7,col)); } } }
+        Location | Coordinate => { painter.circle_filled(c, s*0.5, col); }
+        EthAddress => poly(vec![pt(0.0,-1.0), pt(0.7,0.0), pt(0.0,1.0), pt(-0.7,0.0)]),
+        BtcAddress => {
+            painter.circle_stroke(c, s, st); line(pt(0.0,-0.6), pt(0.0,0.6));
+            line(pt(-0.2,-0.6), pt(0.25,-0.6)); line(pt(-0.2,0.6), pt(0.25,0.6)); line(pt(-0.2,0.0), pt(0.25,0.0)); }
+        Transaction => { line(pt(-0.8,-0.3), pt(0.8,-0.3)); line(pt(0.8,-0.3), pt(0.5,-0.55));
+                         line(pt(0.8,0.3), pt(-0.8,0.3)); line(pt(-0.8,0.3), pt(-0.5,0.05)); }
+        Cve => { poly(vec![pt(0.0,-1.0), pt(0.85,-0.55), pt(0.6,0.7), pt(0.0,1.0), pt(-0.6,0.7), pt(-0.85,-0.55)]);
+                 line(pt(0.0,-0.45), pt(0.0,0.3)); painter.circle_filled(pt(0.0,0.6), w, col); }
+        Service => { painter.circle_stroke(c, s*0.55, st);
+                     for k in 0..8 { let a = std::f32::consts::TAU*k as f32/8.0;
+                         line(pt(0.55*a.cos(),0.55*a.sin()), pt(a.cos(),a.sin())); } }
+        Document | File => page(matches!(kind, Document)),
+        MacAddress | Port => { painter.rect_stroke(Rect::from_center_size(c, egui::vec2(s*1.2,s*1.2)), Rounding::ZERO, st);
+                               for k in 0..3 { let x = -0.4 + k as f32*0.4;
+                                   line(pt(x,-0.6), pt(x,-1.0)); line(pt(x,0.6), pt(x,1.0)); } }
+        Hash => { line(pt(-0.35,-0.9), pt(-0.55,0.9)); line(pt(0.55,-0.9), pt(0.35,0.9));
+                  line(pt(-0.9,-0.3), pt(0.9,-0.3)); line(pt(-0.9,0.3), pt(0.9,0.3)); }
+        Asn => poly((0..6).map(|k| { let a = std::f32::consts::TAU*k as f32/6.0 - std::f32::consts::FRAC_PI_2;
+                                     pt(a.cos(), a.sin()) }).collect()),
+        Phrase => { poly(vec![pt(-1.0,-0.8), pt(1.0,-0.8), pt(1.0,0.5), pt(-0.3,0.5), pt(-0.6,1.0), pt(-0.6,0.5), pt(-1.0,0.5)]);
+                    for y in [-0.4_f32,0.0] { line(pt(-0.6,y), pt(0.6,y)); } }
+    }
+}
+
+/// A Maltego-style red map-pin (teardrop + white dot) centred on `p`.
+fn draw_pin(painter: &egui::Painter, p: Pos2, r: f32) {
+    let red = Color32::from_rgb(213, 64, 58);
+    let top = p - Vec2::new(0.0, r * 0.35);
+    // round head
+    painter.circle_filled(top, r * 0.78, red);
+    // pointed tail (triangle down to the anchor point)
+    let tip = p + Vec2::new(0.0, r * 1.05);
+    painter.add(egui::Shape::convex_polygon(
+        vec![tip, top + Vec2::new(-r * 0.62, r * 0.18), top + Vec2::new(r * 0.62, r * 0.18)],
+        red, Stroke::NONE));
+    painter.circle_stroke(top, r * 0.78, Stroke::new(1.2, Color32::from_rgb(150, 35, 30)));
+    // white centre hole
+    painter.circle_filled(top, r * 0.30, Color32::from_rgb(250, 250, 250));
+}
+
+/// Risk 0-100 → ring colour (amber at 20 → deep red at 100).
+fn risk_color(rk: u8) -> Color32 {
+    let t = ((rk as f32 - 20.0) / 80.0).clamp(0.0, 1.0);
+    let lerp = |a: f32, b: f32| (a + (b - a) * t) as u8;
+    Color32::from_rgb(lerp(228.0, 210.0), lerp(168.0, 56.0), lerp(46.0, 52.0))
+}
+
 pub fn draw_minimap(painter: &egui::Painter, graph: &Graph, view: &View, area: Rect) {
     if graph.entities.len() < 2 { return; }
     let mm_size = Vec2::new(168.0, 116.0);
@@ -498,6 +689,68 @@ pub fn grid_layout(graph: &mut Graph) {
         if let Some(e) = graph.entities.get_mut(id) {
             e.pos = Pos2::new(cx * step - off, cy * step - off);
             e.pinned = false;
+        }
+    }
+}
+
+thread_local! {
+    /// When `Some`, draw uses this virtual time instead of the wall clock — set
+    /// during video recording for deterministic, smooth animation.
+    static RENDER_T: std::cell::Cell<Option<f64>> = const { std::cell::Cell::new(None) };
+}
+/// Set (or clear) the virtual render clock used while recording a video.
+pub fn set_render_time(t: Option<f64>) { RENDER_T.with(|c| c.set(t)); }
+fn render_time() -> Option<f64> { RENDER_T.with(|c| c.get()) }
+
+/// Archimedean spiral — compact and orderly.
+pub fn spiral_layout(graph: &mut Graph) {
+    let mut ids: Vec<u64> = graph.entities.keys().copied().collect();
+    ids.sort_unstable();
+    for (i, id) in ids.iter().enumerate() {
+        let a = i as f32 * 0.5;
+        let r = 36.0 + a * 15.0;
+        if let Some(e) = graph.entities.get_mut(id) {
+            e.pos = Pos2::new(r * a.cos(), r * a.sin());
+            e.pinned = false;
+        }
+    }
+}
+
+/// Deterministic scatter — pseudo-random but stable per node id.
+pub fn scatter_layout(graph: &mut Graph) {
+    let ids: Vec<u64> = graph.entities.keys().copied().collect();
+    let span = (ids.len() as f32).sqrt().max(2.0) * 95.0;
+    for id in &ids {
+        let hx = id.wrapping_mul(2654435761) % 100000;
+        let hy = id.wrapping_mul(40503).wrapping_add(7) % 100000;
+        if let Some(e) = graph.entities.get_mut(id) {
+            e.pos = Pos2::new(hx as f32 / 100000.0 * span - span / 2.0,
+                              hy as f32 / 100000.0 * span - span / 2.0);
+            e.pinned = false;
+        }
+    }
+}
+
+/// Columns grouped by entity kind (Maltego "block"-style ordering).
+pub fn columns_layout(graph: &mut Graph) {
+    let mut kinds: Vec<super::model::Kind> = Vec::new();
+    let mut ids: Vec<u64> = graph.entities.keys().copied().collect();
+    ids.sort_unstable();
+    for &id in &ids {
+        let k = graph.entities[&id].kind;
+        if !kinds.contains(&k) { kinds.push(k); }
+    }
+    let colw = 210.0;
+    let rowh = 92.0;
+    let xoff = (kinds.len() as f32 - 1.0) * colw * 0.5;
+    for (ci, &k) in kinds.iter().enumerate() {
+        let col_ids: Vec<u64> = ids.iter().copied().filter(|i| graph.entities[i].kind == k).collect();
+        let yoff = (col_ids.len() as f32 - 1.0) * rowh * 0.5;
+        for (ri, id) in col_ids.iter().enumerate() {
+            if let Some(e) = graph.entities.get_mut(id) {
+                e.pos = Pos2::new(ci as f32 * colw - xoff, ri as f32 * rowh - yoff);
+                e.pinned = false;
+            }
         }
     }
 }
@@ -742,11 +995,37 @@ fn gradient_fill(painter: &egui::Painter, p: Pos2, r: f32, shape: NodeShape, top
 /// Render a node's body in the chosen visual style.
 fn draw_node_body(painter: &egui::Painter, p: Pos2, r: f32, shape: NodeShape, col: Color32, style: NodeStyle) {
     let white = Color32::WHITE;
+    // Cupertino design overrides node styling entirely: a soft, elevated pastel
+    // disc with a hairline tint border — the saturated icon/label sits on top.
+    if design() == Design::Cupertino {
+        for k in 1..=5 {
+            painter.circle_filled(p + Vec2::new(0.0, k as f32 * 1.1 + 1.0), r,
+                rgba(Color32::BLACK, 9));
+        }
+        fill_shape(painter, p, r, shape, blend(white, col, 0.22));
+        fill_shape(painter, p, r * 0.95, shape, blend(white, col, 0.34));
+        stroke_shape(painter, p, r, shape, Stroke::new(1.2, rgba(col, 130)));
+        return;
+    }
+    // Maltego Classic: a light category-tinted disc with a thin coloured ring; the
+    // large type icon (drawn by the caller in the type colour) is the focal point.
+    if design() == Design::Maltego {
+        painter.circle_filled(p + Vec2::new(0.0, 2.4), r, rgba(Color32::BLACK, 20));
+        painter.circle_filled(p + Vec2::new(0.0, 1.2), r, rgba(Color32::BLACK, 12));
+        fill_shape(painter, p, r, shape, blend(white, col, 0.22));     // light blue-ish tint
+        stroke_shape(painter, p, r, shape, Stroke::new(1.0, rgba(Color32::BLACK, 35)));
+        stroke_shape(painter, p, r - 1.4, shape, Stroke::new(2.2, col));
+        return;
+    }
     match style {
         NodeStyle::Flat => {
+            // soft drop shadow → depth (the biggest "professional" upgrade)
+            for k in 1..=3 {
+                fill_shape(painter, p + Vec2::new(0.0, k as f32 * 1.1 + 0.5), r, shape, rgba(Color32::BLACK, 11));
+            }
             fill_shape(painter, p, r, shape, bg_panel());
-            stroke_shape(painter, p, r, shape, Stroke::new(2.0, col));
-            fill_shape(painter, p, r * 0.62, shape, rgba(col, 55));
+            stroke_shape(painter, p, r, shape, Stroke::new(2.2, col));
+            stroke_shape(painter, p, r - 2.6, shape, Stroke::new(1.0, rgba(col, 55)));
         }
         NodeStyle::Material => {
             // soft elevation shadow (stacked translucent layers)

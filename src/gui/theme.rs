@@ -64,6 +64,39 @@ impl BgStyle {
     }
 }
 
+/// The overall interface design — a different shape language + chrome, switchable
+/// in Settings. `Stock` is the original Parasite look; `Cupertino` is a clean,
+/// light, generously-spaced design (Apple-like, but flat — no liquid glass).
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Design { Stock, Cupertino, Maltego }
+
+impl Design {
+    pub const ALL: [Design; 3] = [Design::Stock, Design::Cupertino, Design::Maltego];
+    pub fn label(self) -> &'static str {
+        match self {
+            Design::Stock => "Stock (Parasite)",
+            Design::Cupertino => "Cupertino — clean & light",
+            Design::Maltego => "Retro Unix — old-Linux (Motif/CDE)",
+        }
+    }
+    /// Base corner radius for cards/buttons.
+    pub fn corner(self) -> f32 {
+        match self { Design::Stock => 6.0, Design::Cupertino => 12.0, Design::Maltego => 0.0 }
+    }
+    /// (item_spacing, button_padding) — kept modest so menus/combos stay compact.
+    fn metrics(self) -> (Vec2, Vec2) {
+        match self {
+            Design::Stock     => (Vec2::new(8.0, 6.0), Vec2::new(10.0, 5.0)),
+            Design::Cupertino => (Vec2::new(9.0, 6.0), Vec2::new(11.0, 6.0)),
+            Design::Maltego   => (Vec2::new(6.0, 4.0), Vec2::new(8.0, 4.0)),
+        }
+    }
+    /// The retro design pins its own grey palette (no theme entry needed).
+    pub fn forces_palette(self) -> Option<Palette> {
+        match self { Design::Maltego => Some(maltego()), _ => None }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct Palette {
     pub dark:        bool,
@@ -106,6 +139,9 @@ pub struct UiConfig {
     pub map_sensitivity: f32,
     pub bg_style:    BgStyle,
     pub variant:     UiVariant,
+    pub glow:        bool,
+    pub animations:  bool,
+    pub anim_speed:  f32,
 }
 
 impl Default for UiConfig {
@@ -116,6 +152,7 @@ impl Default for UiConfig {
             node_labels: true, label_size: 12.0, show_icons: true, color_clusters: false,
             node_style: NodeStyle::Flat, map_sensitivity: 0.6,
             bg_style: BgStyle::Grid, variant: UiVariant::Standard,
+            glow: false, animations: true, anim_speed: 1.0,
         }
     }
 }
@@ -136,7 +173,14 @@ pub const THEMES: &[(&str, fn() -> Palette)] = &[
     ("Rosé",      rose),
     ("Amber",     amber),
     ("Mono",      mono),
+    ("Tokyo Night", tokyo),
+    ("Gruvbox",   gruvbox),
+    ("Synthwave", synthwave),
+    ("Blood",     blood),
+    ("Coffee",    coffee),
     ("Light",     light),
+    ("Paper",     paper),
+    ("Cupertino", cupertino),
 ];
 
 pub fn theme_by_name(name: &str) -> Palette {
@@ -313,12 +357,125 @@ pub fn light() -> Palette {
     }
 }
 
+pub fn tokyo() -> Palette {
+    Palette {
+        dark: true,
+        bg_app: rgb(26,27,38), bg_panel: rgb(31,33,48), bg_sidebar: rgb(22,22,33),
+        bg_canvas: rgb(24,25,36), bg_item_sel: rgb(48,52,76), bg_item_hov: rgb(36,40,60),
+        bg_input: rgb(34,37,56), bg_output: rgb(18,19,28),
+        accent: rgb(122,162,247), accent_dark: rgb(70,98,165), accent_hov: rgb(150,185,255),
+        text_pri: rgb(192,202,245), text_sec: rgb(125,134,175), text_mut: rgb(74,82,115),
+        border: rgb(41,46,66), grid: rgb(30,33,49),
+        c_ok: rgb(158,206,106), c_err: rgb(247,118,142), c_warn: rgb(224,175,104), c_info: rgb(125,207,255),
+    }
+}
+
+pub fn gruvbox() -> Palette {
+    Palette {
+        dark: true,
+        bg_app: rgb(40,40,40), bg_panel: rgb(50,48,47), bg_sidebar: rgb(29,32,33),
+        bg_canvas: rgb(35,34,33), bg_item_sel: rgb(80,73,69), bg_item_hov: rgb(60,56,54),
+        bg_input: rgb(54,51,49), bg_output: rgb(24,24,24),
+        accent: rgb(254,128,25), accent_dark: rgb(175,88,18), accent_hov: rgb(255,160,80),
+        text_pri: rgb(235,219,178), text_sec: rgb(168,153,132), text_mut: rgb(102,92,84),
+        border: rgb(80,73,69), grid: rgb(50,48,47),
+        c_ok: rgb(184,187,38), c_err: rgb(251,73,52), c_warn: rgb(250,189,47), c_info: rgb(131,165,152),
+    }
+}
+
+pub fn synthwave() -> Palette {
+    Palette {
+        dark: true,
+        bg_app: rgb(22,13,38), bg_panel: rgb(31,18,52), bg_sidebar: rgb(16,9,28),
+        bg_canvas: rgb(19,11,33), bg_item_sel: rgb(52,28,82), bg_item_hov: rgb(40,22,66),
+        bg_input: rgb(38,20,62), bg_output: rgb(12,7,22),
+        accent: rgb(255,113,206), accent_dark: rgb(165,60,130), accent_hov: rgb(255,150,225),
+        text_pri: rgb(240,230,255), text_sec: rgb(150,130,200), text_mut: rgb(95,78,135),
+        border: rgb(58,34,90), grid: rgb(38,22,62),
+        c_ok: rgb(114,253,210), c_err: rgb(255,85,130), c_warn: rgb(255,221,109), c_info: rgb(108,213,255),
+    }
+}
+
+pub fn blood() -> Palette {
+    Palette {
+        dark: true,
+        bg_app: rgb(18,10,10), bg_panel: rgb(28,15,15), bg_sidebar: rgb(13,7,7),
+        bg_canvas: rgb(16,9,9), bg_item_sel: rgb(58,24,24), bg_item_hov: rgb(40,18,18),
+        bg_input: rgb(36,17,17), bg_output: rgb(10,5,5),
+        accent: rgb(229,57,53), accent_dark: rgb(150,34,32), accent_hov: rgb(245,95,90),
+        text_pri: rgb(240,224,222), text_sec: rgb(180,140,138), text_mut: rgb(110,76,74),
+        border: rgb(56,28,28), grid: rgb(34,18,18),
+        c_ok: rgb(150,190,110), c_err: rgb(255,80,70), c_warn: rgb(230,170,80), c_info: rgb(200,130,130),
+    }
+}
+
+pub fn coffee() -> Palette {
+    Palette {
+        dark: true,
+        bg_app: rgb(28,22,18), bg_panel: rgb(38,30,24), bg_sidebar: rgb(22,17,14),
+        bg_canvas: rgb(25,20,16), bg_item_sel: rgb(64,50,38), bg_item_hov: rgb(48,38,30),
+        bg_input: rgb(44,35,28), bg_output: rgb(18,14,11),
+        accent: rgb(198,148,96), accent_dark: rgb(140,100,62), accent_hov: rgb(220,172,120),
+        text_pri: rgb(238,226,210), text_sec: rgb(176,156,134), text_mut: rgb(112,96,80),
+        border: rgb(58,46,36), grid: rgb(38,30,24),
+        c_ok: rgb(150,180,120), c_err: rgb(214,108,88), c_warn: rgb(216,170,96), c_info: rgb(168,160,200),
+    }
+}
+
+pub fn paper() -> Palette {
+    Palette {
+        dark: false,
+        bg_app: rgb(250,249,246), bg_panel: rgb(255,255,253), bg_sidebar: rgb(243,241,236),
+        bg_canvas: rgb(252,251,248), bg_item_sel: rgb(224,232,240), bg_item_hov: rgb(236,238,240),
+        bg_input: rgb(255,255,255), bg_output: rgb(248,248,246),
+        accent: rgb(56,118,205), accent_dark: rgb(40,88,160), accent_hov: rgb(80,140,225),
+        text_pri: rgb(32,36,42), text_sec: rgb(96,104,114), text_mut: rgb(158,164,172),
+        border: rgb(220,222,226), grid: rgb(232,234,238),
+        c_ok: rgb(46,140,82), c_err: rgb(198,52,48), c_warn: rgb(176,124,18), c_info: rgb(48,108,190),
+    }
+}
+
+/// The Cupertino design palette — a calm, light, elevated surface set (white
+/// cards on soft gray, subtle hairline borders, deep parasite-green accent).
+pub fn cupertino() -> Palette {
+    Palette {
+        dark: false,
+        bg_app: rgb(236,236,239), bg_panel: rgb(255,255,255), bg_sidebar: rgb(245,245,247),
+        bg_canvas: rgb(242,242,245), bg_item_sel: rgb(223,240,231), bg_item_hov: rgb(237,237,240),
+        bg_input: rgb(255,255,255), bg_output: rgb(247,247,249),
+        accent: rgb(28,158,98), accent_dark: rgb(20,118,73), accent_hov: rgb(38,184,118),
+        text_pri: rgb(29,29,31), text_sec: rgb(99,99,104), text_mut: rgb(160,160,166),
+        border: rgb(210,210,215), grid: rgb(223,223,228),
+        c_ok: rgb(40,168,98), c_err: rgb(214,78,72), c_warn: rgb(206,142,32), c_info: rgb(70,128,210),
+    }
+}
+
+/// Retro old-Linux / Unix workstation palette (Motif / CDE) — classic #c6c6c6
+/// grey, square sunken/raised panels, Motif blue selection, black text.
+pub fn maltego() -> Palette {
+    Palette {
+        dark: false,
+        bg_app: rgb(198,198,198), bg_panel: rgb(206,206,206), bg_sidebar: rgb(190,190,190),
+        bg_canvas: rgb(223,223,219), bg_item_sel: rgb(95,120,180), bg_item_hov: rgb(214,214,214),
+        bg_input: rgb(240,240,237), bg_output: rgb(228,228,224),
+        accent: rgb(48,86,150), accent_dark: rgb(30,58,110), accent_hov: rgb(70,112,180),
+        text_pri: rgb(20,20,20), text_sec: rgb(62,62,62), text_mut: rgb(104,104,104),
+        border: rgb(120,120,120), grid: rgb(176,176,176),
+        c_ok: rgb(38,118,58), c_err: rgb(172,42,38), c_warn: rgb(150,110,20), c_info: rgb(48,86,150),
+    }
+}
+
 thread_local! {
     static CUR:  Cell<Palette>  = Cell::new(anthropic());
     static CONF: Cell<UiConfig> = Cell::new(UiConfig::default());
+    static DSGN: Cell<Design>   = const { Cell::new(Design::Cupertino) };
 }
 
 pub fn current() -> Palette { CUR.with(|c| c.get()) }
+pub fn design() -> Design { DSGN.with(|c| c.get()) }
+pub fn set_design(d: Design) { DSGN.with(|c| c.set(d)); }
+/// Fixed corner radius used by custom cards/buttons (design-aware).
+pub fn corner() -> f32 { design().corner() }
 
 /// `#rrggbb` for a colour — used to theme the external ParasiteGoogle browser.
 pub fn hex(c: Color32) -> String { format!("#{:02x}{:02x}{:02x}", c.r(), c.g(), c.b()) }
@@ -363,16 +520,35 @@ pub fn node_style()  -> NodeStyle { config().node_style }
 pub fn map_sensitivity() -> f32   { config().map_sensitivity }
 pub fn bg_style()    -> BgStyle   { config().bg_style }
 pub fn variant()     -> UiVariant { config().variant }
+pub fn glow()        -> bool      { config().glow }
+pub fn animations()  -> bool      { config().animations }
+pub fn anim_speed()  -> f32       { config().anim_speed }
 
 /// Install fonts once (idempotent enough to call again is fine).
-pub fn setup_fonts(ctx: &egui::Context) {
+pub fn setup_fonts(ctx: &egui::Context) { apply_font(ctx, ""); }
+
+/// Build the font set: bundled DejaVu always present; an optional user font
+/// (a `.ttf`/`.otf` path) is loaded and tried *first* for proportional + mono —
+/// e.g. point this at a Noto Emoji / Symbols font to get coloured-symbol glyphs.
+pub fn apply_font(ctx: &egui::Context, custom_path: &str) {
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert("dejavu".to_owned(),
         egui::FontData::from_static(include_bytes!("fonts/DejaVuSans.ttf")));
     fonts.font_data.insert("dejavu_mono".to_owned(),
         egui::FontData::from_static(include_bytes!("fonts/DejaVuSansMono.ttf")));
-    fonts.families.get_mut(&FontFamily::Proportional).unwrap().insert(0, "dejavu".to_owned());
-    fonts.families.get_mut(&FontFamily::Monospace).unwrap().insert(0, "dejavu_mono".to_owned());
+    let prop = fonts.families.get_mut(&FontFamily::Proportional).unwrap();
+    prop.insert(0, "dejavu".to_owned());
+    let mono = fonts.families.get_mut(&FontFamily::Monospace).unwrap();
+    mono.insert(0, "dejavu_mono".to_owned());
+
+    let p = custom_path.trim();
+    if !p.is_empty() {
+        if let Ok(bytes) = std::fs::read(p) {
+            fonts.font_data.insert("custom".to_owned(), egui::FontData::from_owned(bytes));
+            fonts.families.get_mut(&FontFamily::Proportional).unwrap().insert(0, "custom".to_owned());
+            fonts.families.get_mut(&FontFamily::Monospace).unwrap().insert(0, "custom".to_owned());
+        }
+    }
     ctx.set_fonts(fonts);
 }
 
@@ -401,21 +577,62 @@ pub fn apply(ctx: &egui::Context) {
     v.selection.stroke           = Stroke::new(1.0, p.accent);
     v.hyperlink_color            = p.accent;
     v.override_text_color        = Some(p.text_pri);
-    v.window_rounding            = Rounding::same(6.0);
+    // design shape language: corner radius + window chrome + soft shadow
+    let dsg = design();
+    let rad = Rounding::same(dsg.corner());
+    for w in [&mut v.widgets.noninteractive, &mut v.widgets.inactive, &mut v.widgets.hovered,
+              &mut v.widgets.active, &mut v.widgets.open] {
+        w.rounding = rad;
+    }
+    v.window_rounding = Rounding::same(dsg.corner() + 4.0);
+    v.menu_rounding   = rad;
+    if dsg == Design::Cupertino {
+        // soft elevation instead of glass; hairline borders
+        let sh = egui::epaint::Shadow {
+            offset: Vec2::new(0.0, 8.0), blur: 24.0, spread: 0.0,
+            color: Color32::from_black_alpha(40),
+        };
+        v.window_shadow = sh;
+        v.popup_shadow  = egui::epaint::Shadow {
+            offset: Vec2::new(0.0, 6.0), blur: 18.0, spread: 0.0,
+            color: Color32::from_black_alpha(35),
+        };
+        v.window_stroke = Stroke::new(0.6, p.border);
+    } else {
+        v.window_shadow = egui::epaint::Shadow::NONE;
+        v.popup_shadow  = egui::epaint::Shadow::NONE;
+    }
+    // Retro Unix (Motif/CDE): square chunky widgets with a visible bevel-grey
+    // outline on every control + window.
+    if dsg == Design::Maltego {
+        let bevel = rgb(96, 96, 96);
+        let light = rgb(238, 238, 238);
+        v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, bevel);
+        v.widgets.inactive.bg_stroke = Stroke::new(1.6, bevel);
+        v.widgets.inactive.bg_fill   = p.bg_panel;
+        v.widgets.hovered.bg_stroke  = Stroke::new(1.6, p.text_pri);
+        v.widgets.active.bg_stroke   = Stroke::new(1.6, light);
+        v.window_stroke = Stroke::new(1.6, bevel);
+        v.selection.bg_fill = p.bg_item_sel;
+        v.selection.stroke  = Stroke::new(1.0, p.accent_dark);
+    }
     ctx.set_visuals(v);
 
     let s = config().font_scale;
     let mut style = (*ctx.style()).clone();
+    // Retro Unix uses a monospace UI font everywhere — that 90s terminal feel.
+    let ui_fam = if dsg == Design::Maltego { FontFamily::Monospace } else { FontFamily::Proportional };
     style.text_styles = [
-        (egui::TextStyle::Heading,   FontId::new(18.0 * s, FontFamily::Proportional)),
-        (egui::TextStyle::Body,      FontId::new(13.5 * s, FontFamily::Proportional)),
-        (egui::TextStyle::Small,     FontId::new(11.0 * s, FontFamily::Proportional)),
-        (egui::TextStyle::Button,    FontId::new(13.5 * s, FontFamily::Proportional)),
+        (egui::TextStyle::Heading,   FontId::new(18.0 * s, ui_fam.clone())),
+        (egui::TextStyle::Body,      FontId::new(13.0 * s, ui_fam.clone())),
+        (egui::TextStyle::Small,     FontId::new(11.0 * s, ui_fam.clone())),
+        (egui::TextStyle::Button,    FontId::new(13.0 * s, ui_fam)),
         (egui::TextStyle::Monospace, FontId::new(12.5 * s, FontFamily::Monospace)),
     ].into();
     let compact = config().variant == UiVariant::Compact;
-    style.spacing.item_spacing   = if compact { Vec2::new(6.0, 3.0) } else { Vec2::new(8.0, 6.0) };
-    style.spacing.button_padding = if compact { Vec2::new(7.0, 3.0) } else { Vec2::new(10.0, 5.0) };
+    let (isp, bpad) = dsg.metrics();
+    style.spacing.item_spacing   = if compact { Vec2::new(6.0, 3.0) } else { isp };
+    style.spacing.button_padding = if compact { Vec2::new(7.0, 3.0) } else { bpad };
     style.spacing.window_margin  = Margin::same(0.0);
     ctx.set_style(style);
 }

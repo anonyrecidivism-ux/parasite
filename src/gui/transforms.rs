@@ -57,6 +57,16 @@ pub const TRANSFORMS: &[TransformDef] = &[
                    desc: "MX, NS and TXT records (real DNS resolver)" },
     TransformDef { id: "dom_whois",    name: "WHOIS",              applies: Kind::Domain,
                    desc: "registrar, dates & contacts via whois (port 43)" },
+    TransformDef { id: "dom_otx_urls", name: "OTX URLs",           applies: Kind::Domain,
+                   desc: "known URLs & hostnames from AlienVault OTX (free)" },
+    TransformDef { id: "dom_securitytrails", name: "SecurityTrails Subdomains", applies: Kind::Domain,
+                   desc: "subdomains via SecurityTrails (key)" },
+    TransformDef { id: "dom_fullhunt",  name: "FullHunt Subdomains", applies: Kind::Domain,
+                   desc: "attack-surface subdomains via FullHunt (key)" },
+    TransformDef { id: "dom_builtwith", name: "BuiltWith Tech",     applies: Kind::Domain,
+                   desc: "technology profile via BuiltWith (key)" },
+    TransformDef { id: "dom_whoisxml",  name: "WHOIS (WhoisXML)",   applies: Kind::Domain,
+                   desc: "registrar, dates & contacts via WhoisXML API (key)" },
     TransformDef { id: "dom_wayback",  name: "Wayback URLs",       applies: Kind::Domain,
                    desc: "known URLs from the Internet Archive (CDX)" },
     TransformDef { id: "dom_dork",     name: "Google Dorks",       applies: Kind::Domain,
@@ -97,6 +107,10 @@ pub const TRANSFORMS: &[TransformDef] = &[
                    desc: "passive subdomain enum — runs OWASP amass" },
     TransformDef { id: "dom_gau",      name: "gau URLs (CLI)",     applies: Kind::Domain,
                    desc: "known URLs from CommonCrawl/Wayback — runs lc/gau" },
+    TransformDef { id: "dom_bloodhound", name: "BloodHound: AD collect cmd", applies: Kind::Domain,
+                   desc: "ready bloodhound-python / SharpHound commands for this AD domain" },
+    TransformDef { id: "dom_bh_queries", name: "BloodHound: attack-path queries", applies: Kind::Domain,
+                   desc: "classic Cypher queries (Kerberoast, AS-REP, path→Domain Admins…)" },
     TransformDef { id: "dom_pivots",   name: "Search Links",       applies: Kind::Domain,
                    desc: "Shodan, Censys, urlscan, SecurityTrails… (open in browser)" },
     // ── Website ───────────────────────────────────────────────────────────────
@@ -131,6 +145,8 @@ pub const TRANSFORMS: &[TransformDef] = &[
                    desc: "Have I Been Pwned breaches — needs HIBP key" },
     TransformDef { id: "email_holehe", name: "holehe (account check)", applies: Kind::Email,
                    desc: "where this email is registered — runs the holehe CLI tool" },
+    TransformDef { id: "email_intelx", name: "IntelX Search (key)", applies: Kind::Email,
+                   desc: "leaked-data search via Intelligence X (key)" },
     TransformDef { id: "email_pivots", name: "Search Links",       applies: Kind::Email,
                    desc: "HIBP, EmailRep, Hunter, IntelX, Google (open in browser)" },
     // ── Person ────────────────────────────────────────────────────────────────
@@ -151,6 +167,8 @@ pub const TRANSFORMS: &[TransformDef] = &[
                    desc: "public GitLab account & metadata" },
     TransformDef { id: "user_hackernews", name: "Hacker News",     applies: Kind::Username,
                    desc: "Hacker News karma, age & recent activity" },
+    TransformDef { id: "user_socials", name: "Social Profile Links", applies: Kind::Username,
+                   desc: "build profile URLs across major platforms (Reddit, TikTok, YouTube, Telegram, X…)" },
     TransformDef { id: "user_pivots",  name: "Search Links",       applies: Kind::Username,
                    desc: "search engines & people-search (open in browser)" },
     // ── Social ────────────────────────────────────────────────────────────────
@@ -175,6 +193,14 @@ pub const TRANSFORMS: &[TransformDef] = &[
                    desc: "AlienVault OTX pulses, ASN & country" },
     TransformDef { id: "ip_internetdb",name: "Shodan InternetDB",  applies: Kind::Ip,
                    desc: "free: open ports, vulns (CVE), hostnames, tags" },
+    TransformDef { id: "ip_greynoise", name: "GreyNoise",          applies: Kind::Ip,
+                   desc: "internet-noise & RIOT classification (free community API)" },
+    TransformDef { id: "ip_ipinfo",    name: "IPinfo (key)",       applies: Kind::Ip,
+                   desc: "geo, org, ASN, privacy flags via IPinfo (key)" },
+    TransformDef { id: "ip_binaryedge",name: "BinaryEdge",         applies: Kind::Ip,
+                   desc: "open services & exposure via BinaryEdge (key)" },
+    TransformDef { id: "ip_leakix",    name: "LeakIX",             applies: Kind::Ip,
+                   desc: "exposed services & leaks via LeakIX (key)" },
     TransformDef { id: "ip_ipapi",     name: "Geo + ASN (ip-api)", applies: Kind::Ip,
                    desc: "free city/country/ISP/ASN + coordinates" },
     TransformDef { id: "ip_rdap",      name: "RDAP (netblock/org)",applies: Kind::Ip,
@@ -198,6 +224,8 @@ pub const TRANSFORMS: &[TransformDef] = &[
                    desc: "guess country from the calling code" },
     TransformDef { id: "phone_format", name: "Normalize",          applies: Kind::Phone,
                    desc: "strip to E.164-ish digits and validate length" },
+    TransformDef { id: "phone_numverify", name: "Validate (NumVerify)", applies: Kind::Phone,
+                   desc: "carrier, line type, country & validity via NumVerify (key)" },
     TransformDef { id: "phone_pivots", name: "Search Links",       applies: Kind::Phone,
                    desc: "Truecaller, sync.me, WhoCalld, NumLookup, Google (open in browser)" },
     TransformDef { id: "phone_infoga", name: "PhoneInfoga (CLI)",  applies: Kind::Phone,
@@ -262,7 +290,14 @@ pub const TRANSFORMS: &[TransformDef] = &[
 ];
 
 pub fn for_kind(kind: Kind) -> Vec<&'static TransformDef> {
-    TRANSFORMS.iter().filter(|t| t.applies == kind).collect()
+    TRANSFORMS.iter().chain(super::pivots::defs().iter())
+        .filter(|t| t.applies == kind).collect()
+}
+
+/// True if `tid` (built-in or pivot) applies to `kind`.
+pub fn applies_to(tid: &str, kind: Kind) -> bool {
+    TRANSFORMS.iter().any(|t| t.id == tid && t.applies == kind)
+        || super::pivots::applies(tid, kind)
 }
 
 const SUBDOMAINS: &[&str] = &[
@@ -286,7 +321,7 @@ const PORTS: &[(u16, &str)] = &[
 ];
 
 fn client() -> reqwest::Client {
-    reqwest::Client::builder()
+    super::net::builder()
         .user_agent("parasite-graph/2.0")
         .timeout(Duration::from_secs(15))
         .danger_accept_invalid_certs(true)
@@ -503,7 +538,20 @@ pub async fn run(id: &str, value: &str) -> Outcome {
         "ip_bgpview" => bgpview_ip(&v, &mut o).await,
         "user_keybase" => keybase(&v, &mut o).await,
         "user_gitlab"  => gitlab_user(&v, &mut o).await,
+        "user_socials" => user_socials(&v, &mut o),
         "user_hackernews" => hackernews_user(&v, &mut o).await,
+        // ── extended providers (batch) ──
+        "ip_greynoise" => greynoise_ip(&v, &mut o).await,
+        "dom_otx_urls" => otx_domain_urls(&v, &mut o).await,
+        "dom_securitytrails" => securitytrails_subs(&v, &mut o).await,
+        "dom_fullhunt" => fullhunt_subs(&v, &mut o).await,
+        "dom_builtwith" => builtwith_tech(&v, &mut o).await,
+        "dom_whoisxml" => whoisxml(&v, &mut o).await,
+        "ip_ipinfo"  => ipinfo_ip(&v, &mut o).await,
+        "ip_binaryedge" => binaryedge_ip(&v, &mut o).await,
+        "ip_leakix"  => leakix_ip(&v, &mut o).await,
+        "phone_numverify" => numverify(&v, &mut o).await,
+        "email_intelx" => intelx_search(&v, &mut o).await,
         // ── external GitHub CLI tools (optional) ──
         "email_holehe"  => holehe(&v, &mut o).await,
         "user_maigret"  => maigret(&v, &mut o).await,
@@ -513,9 +561,19 @@ pub async fn run(id: &str, value: &str) -> Outcome {
         "dom_assetfinder" => assetfinder(&v, &mut o).await,
         "dom_amass"  => amass(&v, &mut o).await,
         "dom_gau"    => gau(&v, &mut o).await,
+        "dom_bloodhound" => bloodhound_cmds(&v, &mut o),
+        "dom_bh_queries" => bloodhound_queries(&v, &mut o),
         "web_httpx"  => httpx(&v, &mut o).await,
         "web_katana" => katana(&v, &mut o).await,
-        other => o.log.push(format!("✗  unknown transform '{other}'")),
+        other => {
+            // data-driven pivots: open the entity in an external OSINT service
+            if let Some((url, edge)) = super::pivots::run(other, &v) {
+                o.item(Kind::Website, url.clone(), edge);
+                o.log.push(format!("✓  {url}"));
+            } else {
+                o.log.push(format!("✗  unknown transform '{other}'"));
+            }
+        }
     }
 
     o
@@ -1649,6 +1707,217 @@ async fn internetdb(ip: &str, o: &mut Outcome) {
         ports.len(), arr("vulns").len(), arr("hostnames").len()));
 }
 
+// ── Extended providers (batch) ─────────────────────────────────────────────────
+
+/// JSON body of a GET with an optional header, returns parsed Value or logs error.
+async fn get_json(o: &mut Outcome, name: &str, req: reqwest::RequestBuilder) -> Option<serde_json::Value> {
+    let resp = match req.send().await {
+        Ok(r) => r, Err(e) => { o.log.push(format!("✗  {name}: {e}")); return None; }
+    };
+    let code = resp.status().as_u16();
+    let body = resp.text().await.unwrap_or_default();
+    if !(200..300).contains(&code) {
+        o.log.push(format!("✗  {name}: HTTP {code}"));
+        return None;
+    }
+    serde_json::from_str(&body).ok()
+}
+
+/// GreyNoise community classification (free, keyless).
+async fn greynoise_ip(ip: &str, o: &mut Outcome) {
+    let url = format!("https://api.greynoise.io/v3/community/{}", enc(ip.trim()));
+    let mut req = client().get(&url);
+    let k = keys::get("greynoise");
+    if !k.trim().is_empty() { req = req.header("key", k); }
+    let Some(j) = get_json(o, "GreyNoise", req).await else { return };
+    let noise = j["noise"].as_bool().unwrap_or(false);
+    let riot = j["riot"].as_bool().unwrap_or(false);
+    o.props.push(("greynoise_noise".into(), noise.to_string()));
+    o.props.push(("greynoise_riot".into(), riot.to_string()));
+    if let Some(c) = j["classification"].as_str() { o.props.push(("greynoise_class".into(), c.into())); }
+    if let Some(n) = j["name"].as_str() { o.props.push(("greynoise_name".into(), n.into())); }
+    if let Some(m) = j["message"].as_str() { o.log.push(format!("◦  GreyNoise: {m}")); }
+    o.log.push(format!("✓  GreyNoise: noise={noise} riot={riot}"));
+}
+
+/// AlienVault OTX known URLs for a domain (free).
+async fn otx_domain_urls(domain: &str, o: &mut Outcome) {
+    let url = format!("https://otx.alienvault.com/api/v1/indicators/domain/{}/url_list?limit=100", enc(domain.trim()));
+    let Some(j) = get_json(o, "OTX URLs", client().get(&url)).await else { return };
+    let mut n = 0;
+    let mut hosts = std::collections::BTreeSet::new();
+    if let Some(arr) = j["url_list"].as_array() {
+        for u in arr {
+            if let Some(s) = u["url"].as_str() { if n < 80 { o.item(Kind::Website, s, "OTX url"); n += 1; } }
+            if let Some(h) = u["hostname"].as_str() { if h.ends_with(domain) { hosts.insert(h.to_lowercase()); } }
+        }
+    }
+    for h in hosts { if h != domain { o.item(Kind::Domain, h, "subdomain"); } }
+    o.log.push(format!("✓  OTX: {n} URL(s)"));
+}
+
+/// SecurityTrails subdomains (key).
+async fn securitytrails_subs(domain: &str, o: &mut Outcome) {
+    let Some(k) = key("securitytrails", o) else { return };
+    let url = format!("https://api.securitytrails.com/v1/domain/{}/subdomains?children_only=false", enc(domain.trim()));
+    let Some(j) = get_json(o, "SecurityTrails", client().get(&url).header("APIKEY", k)).await else { return };
+    let mut n = 0;
+    if let Some(arr) = j["subdomains"].as_array() {
+        for s in arr {
+            if let Some(sub) = s.as_str() {
+                if n < 200 { o.item(Kind::Domain, format!("{sub}.{}", domain.trim()), "subdomain"); n += 1; }
+            }
+        }
+    }
+    o.log.push(format!("✓  SecurityTrails: {n} subdomain(s)"));
+}
+
+/// FullHunt attack-surface subdomains (key).
+async fn fullhunt_subs(domain: &str, o: &mut Outcome) {
+    let Some(k) = key("fullhunt", o) else { return };
+    let url = format!("https://fullhunt.io/api/v1/domain/{}/subdomains", enc(domain.trim()));
+    let Some(j) = get_json(o, "FullHunt", client().get(&url).header("X-API-KEY", k)).await else { return };
+    let mut n = 0;
+    if let Some(arr) = j["hosts"].as_array() {
+        for s in arr {
+            if let Some(h) = s.as_str() { if n < 200 { o.item(Kind::Domain, h, "subdomain"); n += 1; } }
+        }
+    }
+    o.log.push(format!("✓  FullHunt: {n} subdomain(s)"));
+}
+
+/// BuiltWith technology profile (key).
+async fn builtwith_tech(domain: &str, o: &mut Outcome) {
+    let Some(k) = key("builtwith", o) else { return };
+    let url = format!("https://api.builtwith.com/v21/api.json?KEY={}&LOOKUP={}", enc(&k), enc(domain.trim()));
+    let Some(j) = get_json(o, "BuiltWith", client().get(&url)).await else { return };
+    let mut n = 0;
+    if let Some(paths) = j["Results"][0]["Result"]["Paths"].as_array() {
+        for p in paths {
+            if let Some(techs) = p["Technologies"].as_array() {
+                for t in techs {
+                    if let Some(name) = t["Name"].as_str() {
+                        if n < 60 { o.item(Kind::Service, name, "technology"); n += 1; }
+                    }
+                }
+            }
+        }
+    }
+    o.log.push(format!("✓  BuiltWith: {n} technolog(ies)"));
+}
+
+/// WHOIS via WhoisXML API (key).
+async fn whoisxml(domain: &str, o: &mut Outcome) {
+    let Some(k) = key("whoisxml", o) else { return };
+    let url = format!("https://www.whoisxmlapi.com/whoisserver/WhoisService?apiKey={}&domainName={}&outputFormat=JSON",
+        enc(&k), enc(domain.trim()));
+    let Some(j) = get_json(o, "WhoisXML", client().get(&url)).await else { return };
+    let r = &j["WhoisRecord"];
+    for (label, ptr) in [("registrar", "registrarName"), ("created", "createdDate"),
+                         ("expires", "expiresDate"), ("updated", "updatedDate")] {
+        if let Some(v) = r[ptr].as_str() { o.props.push((label.into(), v.into())); }
+    }
+    if let Some(rd) = r["registrant"]["organization"].as_str() {
+        o.item(Kind::Organization, rd, "registrant");
+    }
+    if let Some(ns) = r["nameServers"]["hostNames"].as_array() {
+        for h in ns { if let Some(s) = h.as_str() { o.item(Kind::Domain, s, "name server"); } }
+    }
+    o.log.push("✓  WhoisXML record fetched".into());
+}
+
+/// IPinfo geo/org (key).
+async fn ipinfo_ip(ip: &str, o: &mut Outcome) {
+    let Some(k) = key("ipinfo", o) else { return };
+    let url = format!("https://ipinfo.io/{}/json?token={}", enc(ip.trim()), enc(&k));
+    let Some(j) = get_json(o, "IPinfo", client().get(&url)).await else { return };
+    for (label, ptr) in [("city","city"),("region","region"),("country","country"),
+                         ("org","org"),("postal","postal"),("timezone","timezone")] {
+        if let Some(v) = j[ptr].as_str() { o.props.push((label.into(), v.into())); }
+    }
+    if let Some(org) = j["org"].as_str() { o.item(Kind::Organization, org, "hosting org"); }
+    if let Some(loc) = j["loc"].as_str() { o.item(Kind::Coordinate, loc, "geo"); }
+    o.log.push("✓  IPinfo fetched".into());
+}
+
+/// BinaryEdge exposed services (key).
+async fn binaryedge_ip(ip: &str, o: &mut Outcome) {
+    let Some(k) = key("binaryedge", o) else { return };
+    let url = format!("https://api.binaryedge.io/v2/query/ip/{}", enc(ip.trim()));
+    let Some(j) = get_json(o, "BinaryEdge", client().get(&url).header("X-Key", k)).await else { return };
+    let mut n = 0;
+    if let Some(events) = j["events"].as_array() {
+        for e in events {
+            if let Some(port) = e["port"].as_u64() {
+                if n < 60 { o.item(Kind::Port, port.to_string(), "open service"); n += 1; }
+            }
+        }
+    }
+    o.log.push(format!("✓  BinaryEdge: {n} service(s)"));
+}
+
+/// LeakIX exposed services & leaks (key).
+async fn leakix_ip(ip: &str, o: &mut Outcome) {
+    let Some(k) = key("leakix", o) else { return };
+    let url = format!("https://leakix.net/host/{}", enc(ip.trim()));
+    let Some(j) = get_json(o, "LeakIX", client().get(&url).header("api-key", k).header("Accept", "application/json")).await else { return };
+    let mut n = 0;
+    if let Some(services) = j["Services"].as_array() {
+        for s in services {
+            if let Some(port) = s["port"].as_str() { o.item(Kind::Port, port, "service"); }
+            if let Some(soft) = s["software"]["name"].as_str() { o.item(Kind::Service, soft, "software"); }
+            n += 1;
+        }
+    }
+    if let Some(leaks) = j["Leaks"].as_array() {
+        for l in leaks { if let Some(ev) = l["event_source"].as_str() { o.item(Kind::Phrase, ev, "leak"); } }
+    }
+    o.log.push(format!("✓  LeakIX: {n} service entr(ies)"));
+}
+
+/// NumVerify phone validation (key).
+async fn numverify(phone: &str, o: &mut Outcome) {
+    let Some(k) = key("numverify", o) else { return };
+    let num: String = phone.chars().filter(|c| c.is_ascii_digit()).collect();
+    let url = format!("https://apilayer.net/api/validate?access_key={}&number={}", enc(&k), enc(&num));
+    let Some(j) = get_json(o, "NumVerify", client().get(&url)).await else { return };
+    if j["valid"].as_bool() == Some(false) { o.log.push("◦  NumVerify: number not valid".into()); return; }
+    for (label, ptr) in [("carrier","carrier"),("line_type","line_type"),
+                         ("country","country_name"),("location","location")] {
+        if let Some(v) = j[ptr].as_str() { if !v.is_empty() { o.props.push((label.into(), v.into())); } }
+    }
+    if let Some(c) = j["carrier"].as_str() { if !c.is_empty() { o.item(Kind::Organization, c, "carrier"); } }
+    o.log.push("✓  NumVerify validated".into());
+}
+
+/// Intelligence X search (key) — two-step: start search, fetch results.
+async fn intelx_search(term: &str, o: &mut Outcome) {
+    let Some(k) = key("intelx", o) else { return };
+    let body = serde_json::json!({ "term": term.trim(), "maxresults": 20, "media": 0,
+        "sort": 2, "terminate": [] });
+    let start = client().post("https://2.intelx.io/intelligent/search")
+        .header("x-key", &k).json(&body).send().await;
+    let id = match start {
+        Ok(r) => match r.json::<serde_json::Value>().await {
+            Ok(j) => j["id"].as_str().map(|s| s.to_string()),
+            Err(_) => None,
+        },
+        Err(e) => { o.log.push(format!("✗  IntelX: {e}")); return; }
+    };
+    let Some(id) = id else { o.log.push("✗  IntelX: no search id (check key)".into()); return };
+    let url = format!("https://2.intelx.io/intelligent/search/result?id={id}&limit=20");
+    let Some(j) = get_json(o, "IntelX", client().get(&url).header("x-key", k)).await else { return };
+    let mut n = 0;
+    if let Some(records) = j["records"].as_array() {
+        for r in records {
+            if let Some(name) = r["name"].as_str() {
+                if !name.is_empty() && n < 30 { o.item(Kind::Phrase, name, "intelx hit"); n += 1; }
+            }
+        }
+    }
+    o.log.push(format!("✓  IntelX: {n} record(s)"));
+}
+
 // ── ip-api.com (free, no key) ──────────────────────────────────────────────────
 async fn ipapi(ip: &str, o: &mut Outcome) {
     let url = format!("http://ip-api.com/json/{}?fields=status,country,regionName,city,lat,lon,isp,org,as,query", enc(ip.trim()));
@@ -1944,6 +2213,83 @@ async fn subfinder(domain: &str, o: &mut Outcome) {
         if h.ends_with(domain) && !h.is_empty() { n += 1; if n <= 300 { o.item(Kind::Domain, h, "subdomain"); } }
     }
     o.log.push(format!("✓  subfinder: {n} subdomain(s)"));
+}
+
+/// BloodHound is an Active-Directory attack-path tool. parasite can't run a full
+/// AD collection from one entity (it needs domain credentials + a reachable DC),
+/// so these transforms emit the exact, ready-to-run collection commands as Phrase
+/// nodes — fill in your creds and run them, then import the JSON into BloodHound.
+fn bloodhound_cmds(domain: &str, o: &mut Outcome) {
+    let d = domain.trim().to_lowercase();
+    let cmds = [
+        ("bloodhound-python (Linux collector)",
+         format!("bloodhound-python -d {d} -u USER -p 'PASS' -ns DC_IP -c All --zip")),
+        ("SharpHound.exe (Windows, on-host)",
+         format!("SharpHound.exe -c All -d {d} --zipfilename {d}")),
+        ("SharpHound (stealth / session loop)",
+         format!("SharpHound.exe -c All,Session -d {d} --stealth --loop")),
+        ("AzureHound (Entra ID / Azure)",
+         format!("azurehound -u USER -p 'PASS' list --tenant {d} -o azure.json")),
+        ("nxc → BloodHound (NetExec)",
+         format!("nxc ldap DC_IP -u USER -p 'PASS' --bloodhound -c All -d {d}")),
+    ];
+    for (name, cmd) in cmds {
+        o.items.push(NewItem { kind: Kind::Phrase, value: cmd, edge: "bloodhound".into(),
+            props: vec![("tool".into(), name.to_string())] });
+    }
+    o.log.push("✓  5 BloodHound collection commands (fill in creds + DC IP)".into());
+    o.log.push("ℹ  install the Linux collector with: pip install bloodhound".into());
+}
+
+/// Emit classic BloodHound Cypher attack-path queries as Phrase nodes.
+fn bloodhound_queries(domain: &str, o: &mut Outcome) {
+    let d = domain.trim().to_uppercase();
+    let queries = [
+        ("Kerberoastable users",
+         "MATCH (u:User {hasspn:true}) RETURN u".to_string()),
+        ("AS-REP roastable (no preauth)",
+         "MATCH (u:User {dontreqpreauth:true}) RETURN u".to_string()),
+        ("Shortest paths to Domain Admins",
+         format!("MATCH p=shortestPath((n)-[*1..]->(g:Group)) \
+                  WHERE g.name =~ '(?i)DOMAIN ADMINS@{d}' RETURN p")),
+        ("Owned principals → high value",
+         "MATCH p=shortestPath((n {owned:true})-[*1..]->(m {highvalue:true})) RETURN p".to_string()),
+        ("Users with DCSync rights",
+         "MATCH (u)-[:GetChanges|GetChangesAll*1..]->(d:Domain) RETURN u".to_string()),
+        ("Computers where Domain Users are local admin",
+         "MATCH p=(g:Group)-[:AdminTo]->(c:Computer) \
+          WHERE g.name STARTS WITH 'DOMAIN USERS' RETURN p".to_string()),
+    ];
+    for (name, q) in queries {
+        o.items.push(NewItem { kind: Kind::Phrase, value: q, edge: "cypher".into(),
+            props: vec![("query".into(), name.to_string())] });
+    }
+    o.log.push("✓  6 BloodHound Cypher queries — paste into the BloodHound console".into());
+}
+
+/// Build social-profile URLs for a username across major platforms.
+fn user_socials(user: &str, o: &mut Outcome) {
+    let u = user.trim().trim_start_matches('@');
+    let sites: &[(&str, &str)] = &[
+        ("GitHub",    "https://github.com/{u}"),
+        ("Reddit",    "https://www.reddit.com/user/{u}"),
+        ("X / Twitter","https://x.com/{u}"),
+        ("Instagram", "https://www.instagram.com/{u}/"),
+        ("TikTok",    "https://www.tiktok.com/@{u}"),
+        ("YouTube",   "https://www.youtube.com/@{u}"),
+        ("Telegram",  "https://t.me/{u}"),
+        ("Twitch",    "https://www.twitch.tv/{u}"),
+        ("Mastodon",  "https://mastodon.social/@{u}"),
+        ("Keybase",   "https://keybase.io/{u}"),
+        ("GitLab",    "https://gitlab.com/{u}"),
+        ("Steam",     "https://steamcommunity.com/id/{u}"),
+    ];
+    for (name, tpl) in sites {
+        let url = tpl.replace("{u}", u);
+        o.items.push(NewItem { kind: Kind::Social, value: url, edge: (*name).into(),
+            props: vec![("platform".into(), (*name).into())] });
+    }
+    o.log.push(format!("✓  {} social profile URLs for '{u}'", sites.len()));
 }
 
 async fn the_harvester(domain: &str, o: &mut Outcome) {

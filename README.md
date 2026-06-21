@@ -2,8 +2,27 @@
 
 **An open-source, graph-based OSINT & web-reconnaissance toolkit — a free alternative to Maltego.**
 
+![Rust](https://img.shields.io/badge/built%20with-Rust-orange)
+![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-blue)
+[![Release](https://github.com/anonyrecidivism-ux/parasite/actions/workflows/release.yml/badge.svg)](../../actions/workflows/release.yml)
+![License](https://img.shields.io/badge/license-MIT-green)
+
 > 🚧 **Status: Beta.** Core features work, but expect rough edges, breaking
 > changes and incomplete Maltego parity. Feedback and issues welcome.
+
+## Quickstart
+
+```bash
+# 1. install Rust  →  https://rustup.rs
+# 2. build & run the GUI
+cargo run --release --bin parasitephp
+```
+
+Then: drop an entity from the left **palette** → **right-click** it (or `Ctrl+K`)
+to run transforms → open **λ Insights** for next-step suggestions. Optional:
+`ffmpeg` for MP4 export; add AI keys in **⚙ Settings** (everything also works
+without them). On **Linux** also build the WebKitGTK browser:
+`cargo build --release --bin parasitegoogle`.
 
 Drop entities (domains, IPs, emails, hashes…) onto an infinite canvas and expand
 them with **transforms** that discover related entities. Everything runs locally
@@ -15,10 +34,20 @@ and in-process — no servers, no API keys, no telemetry.
 
 ---
 
-## Four modes
+## Modes
 
-Switch between **◇ Graph**, **◎ GEOINT**, **⏱ Monitor** and **🌐 ParasiteGoogle**
-in the top bar.
+Switch in the top bar between: **◇ Graph**, **◎ GEOINT**, **⏱ Monitor**,
+**🗂 Dossier**, **🗃 Cases**, **📡 Watch**, **🧰 Toolbox** and **🌐 ParasiteGoogle**.
+
+- **🗃 Cases** — manage several investigations; save the current graph as a named
+  case and switch between them.
+- **📡 Watch** — keep an eye on a domain (new certs/subdomains), GitHub user, or
+  BTC address; it alerts you when anything changes. Keyless, on-demand or on a timer.
+- **🧰 Toolbox** — offline utilities: Base64/Hex/URL encode-decode, MD5/SHA-1/SHA-256,
+  a **JWT decoder**, username/name variant generator, Google-dork builder, coordinate
+  converter. No network, no keys.
+- **🗂 Dossier** — type a person/org/place and it assembles a readable profile from
+  Wikipedia + Wikidata (and optionally your own JSON DB), exportable to Markdown/JSON/PNG/PDF.
 
 ### ⏱ Monitor — live crypto feed
 A **live transaction feed** — no addresses to enter. It streams recent **BTC,
@@ -53,11 +82,12 @@ A standalone geospatial workspace:
 ## The graph workspace
 
 One unified, Maltego-style window:
-- An infinite, pannable / zoomable canvas with force-directed auto-layout.
-- An **entity palette** with 13 types: Domain, Website, IP, Email, Phone,
-  Person, **Username**, **Social Profile**, File, Hash, Port, Netblock, Phrase.
+- An infinite, pannable / zoomable canvas with **8 layout algorithms**
+  (force-directed, tree, radial, circle, spiral, grid, columns-by-type, scatter).
+- An **entity palette** with **25 types** grouped into Maltego-style categories
+  (Infrastructure, Personal, Locations, Malware & Files, Cryptocurrency, Other).
 - **Right-click any node** for a context menu of transforms (the classic Maltego
-  gesture), or use the details panel on the right.
+  gesture), a **command palette** (`Ctrl+K`), or the details panel on the right.
 - **Multi-select**: shift-drag a marquee or shift-click nodes; move or delete
   them together.
 - **Machines** — one-click transform pipelines that run in waves and expand the
@@ -65,8 +95,21 @@ One unified, Maltego-style window:
   Identity*).
 - **Searchable entity list** in the sidebar — click to jump to a node.
 - **Save / load** graphs as JSON, **import Maltego `.mtgx`**, **export** to CSV,
-  **PNG** and **PDF**.
-- **23 entity types** — every type has at least one transform.
+  **PNG**, **PDF**, a self-contained **HTML report**, and an **animated MP4** (via ffmpeg).
+- **Auto-saved session** — your graph is restored after a restart or crash.
+- **25 entity types** — every type has at least one transform.
+
+### 🧠 λ Insights — a rule engine, not AI
+A deterministic "smart graph" advisor with **no AI**: a tiny embedded **Lisp**
+interpreter runs editable rules over facts computed from your graph and suggests
+the next move — coverage gaps, shared infrastructure (co-hosting, common registrar),
+cycles, hubs, duplicates, unchecked reputation. Each suggestion **explains which
+facts fired it** (`∵ …`), can **highlight the nodes** it refers to and **run** the
+relevant transform/machine in one click. **⚑ Auto-triage** actually checks services
+(GreyNoise for IPs, HTTP liveness for hosts) and **sets flags**. Rules live in a
+**live-reloaded in-app editor** and can be **exported / imported** as packs.
+Per-node **risk scores** (0–100) are drawn as coloured rings. Fully offline,
+explainable, free.
 
 Both the in-process transforms **and** the 28 recon **operations** (the old
 `parasite` engine: crawling, host analysis, fuzzing, wordlists…) live in the
@@ -74,27 +117,25 @@ same right-click menu. Operations stream their output into the log and harvest
 any URLs / emails / IPs they print back onto the graph. Double-click a node to
 run its default transform.
 
-### Themes & customization
+### Look & customization
 A first-run **welcome screen** walks you through the basics. Open **⚙ Settings**
 (top-right) to customize:
-- **3 interface layouts**: Standard, Compact, Focus (canvas-only, no palette).
-- **12 built-in themes**: Anthropic, Midnight, Matrix, Dracula, Nord, Solarized,
-  Cyberpunk, Ocean, Rosé, Amber, Mono, Light.
-- **Custom accent colour** (full picker + quick swatches).
-- **Node shape** (circle / square / diamond / hexagon), **curved edges**,
-  **background style** (grid / dots / plain).
-- **Node size**, **font scale** and **edge-label** toggles.
+- **3 interface designs**: **Stock** (the original dark Parasite look), **Cupertino**
+  (clean, light, soft — Apple-like, flat, no glassmorphism), and **Retro Unix** — a
+  grey **Motif/CDE** old-Linux workstation with 3D bevels, square corners, a
+  monospace UI font and **vector entity pictograms** (globe, monitor, person,
+  red map-pins…). The retro design pins its own palette.
+- **Built-in themes** (for Stock/Cupertino): Anthropic, Midnight, Matrix, Dracula,
+  Nord, Solarized, Cyberpunk, Ocean, Rosé, Amber, Mono, Light, Paper, Cupertino…
+- **Custom accent colour**, node shape/style, curved edges, background style,
+  node size, font scale, edge-label toggle, and a **custom UI font** (`.ttf/.otf`).
+- **Network**: a **proxy** (SOCKS5/HTTP) for all traffic, **DuckDuckGo/Google**
+  search choice, and a **block-insecure-HTTP** switch.
 
-- **5 node styles**: Flat, **Liquid glass**, **Material You**, **Neon glow**, Outline.
-- **8 node shapes** (circle / square / diamond / triangle / pentagon / hexagon /
-  octagon / **by type** — a distinct shape per entity kind).
-- **Edge thickness**, curved edges, node-label toggle.
-
-Panels are **resizable** (drag their edges). Plus **5 layout algorithms**
-(force-directed / circle / grid / tree / radial), a **table view**, a
-**graph-analytics** panel (degree & **betweenness** centrality, connected
-components, density, isolates), **cluster colouring**, and **PNG/PDF/CSV** export.
-Everything persists to `~/.config/parasite/settings.json`.
+Localized in **English / Russian / Ukrainian**. Panels are resizable; plus a
+**table view**, a **graph-analytics** panel (degree & **betweenness** centrality,
+connected components, density), and a **Coverage board** (which checks have run per
+entity). Everything persists to `~/.config/parasite/settings.json`.
 
 The installed menu copy **auto-updates**: launch a freshly-built version and it
 refreshes the binary in `~/.local/share/parasite/` automatically.
@@ -114,10 +155,21 @@ parasitephp --no-install  # run without touching the menu
 
 ---
 
-## Built-in transforms
+## Transforms
 
-Everything runs locally in pure Rust — **no API keys**, no external services to
-sign up for.
+**320+ transforms** — ~110 in-process ones (pure Rust, mostly **no API keys**)
+plus **200+ one-click "pivots"** that open an entity in the relevant OSINT service
+(VirusTotal, Shodan, Censys, crt.sh, GreyNoise, AbuseIPDB, HIBP, Hunter, IntelX,
+Etherscan, Blockchair, GitHub/Telegram/Reddit…). **19 machines** chain them into
+one-click pipelines (Domain Deep Recon, IP Full Profile, Email Breach Sweep,
+Username 360, Phone Profile, BTC/ETH Wallet Trace…).
+
+**Optional AI** (natural-language graph building, chat over the graph/dossier) via
+**8 providers** — Claude, Gemini, OpenAI, Mistral, DeepSeek, Groq, OpenRouter,
+xAI Grok — with a model picker. Keys are local and optional; the rule-based λ
+Insights engine needs no AI at all.
+
+The in-process transforms below all run locally:
 
 | Entity    | Transforms |
 |-----------|------------|
@@ -177,8 +229,24 @@ cargo run --release --bin parasite
 ```
 
 Release binaries land in `target/release/` (`parasitephp` and `parasite`).
-The Operations tab shells out to the `parasite` binary, so build both for full
-functionality — keeping them side by side in the same directory is enough.
+The Operations tab shells out to the `parasite` binary, so build both — keeping
+them side by side in the same directory is enough.
+
+### Platforms
+- **Linux** — full functionality, including the WebKitGTK browser
+  (`parasitegoogle`). Needs `libgtk-3-dev` + `libwebkit2gtk-4.1-dev`.
+- **macOS / Windows** — the GUI (`parasitephp`) and engine (`parasite`) build and
+  run; "open in browser" actions fall back to your system browser (the embedded
+  WebKitGTK browser is Linux-only). Build with
+  `cargo build --release --bin parasitephp --bin parasite`.
+
+Pre-built binaries for **Linux, macOS (Intel + Apple Silicon) and Windows** are
+produced by the GitHub Actions release workflow — push a `v*` tag (or run it
+manually) and the platform bundles are attached to the release.
+
+Optional: `parasitephp --setup` auto-installs OSINT CLI tools (holehe, sherlock,
+maigret, subfinder, waybackurls) that some transforms shell out to. `ffmpeg` is
+needed for **MP4 video export**.
 
 ---
 

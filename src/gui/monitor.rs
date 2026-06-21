@@ -71,7 +71,7 @@ impl MonitorPanel {
         let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(3).enable_all().build()
             .expect("mon runtime");
         let (tx, rx) = std::sync::mpsc::channel();
-        let client = reqwest::Client::builder().user_agent("parasite-monitor/1.0")
+        let client = super::net::builder().user_agent("parasite-monitor/1.0")
             .timeout(Duration::from_secs(15)).build().unwrap();
         Self {
             feed: Vec::new(), seen: HashSet::new(), rt, tx, rx, client,
@@ -176,7 +176,7 @@ impl MonitorPanel {
                             let up = m.change >= 0.0;
                             let col = if up { c_ok() } else { c_err() };
                             let arrow = if up { "▲" } else { "▼" };
-                            egui::Frame::none().fill(bg_panel()).rounding(Rounding::same(6.0))
+                            egui::Frame::none().fill(bg_panel()).rounding(Rounding::same(corner()))
                                 .inner_margin(Margin::symmetric(9.0, 5.0))
                                 .stroke(Stroke::new(1.0, border())).show(ui, |ui| {
                                     ui.label(RichText::new(&m.sym).color(text_pri()).strong().size(12.0));
@@ -201,7 +201,7 @@ impl MonitorPanel {
                 .stroke(Stroke::new(1.0, border())))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("⏱ LIVE FEED").color(accent()).strong().size(13.0));
+                    ui.label(RichText::new("◷ LIVE FEED").color(accent()).strong().size(13.0));
                     ui.add_space(8.0);
                     ui.checkbox(&mut self.show_btc, RichText::new("Ƀ BTC").color(Chain::Btc.color()).size(12.0));
                     ui.checkbox(&mut self.show_eth, RichText::new("Ξ ETH").color(Chain::Eth.color()).size(12.0));
@@ -211,7 +211,7 @@ impl MonitorPanel {
                     ui.add(egui::Slider::new(&mut self.min_usd, 0.0..=1_000_000.0)
                         .logarithmic(true).custom_formatter(|n, _| format!("${}", fmt_usd(n)))
                         .clamping(egui::SliderClamping::Always));
-                    let plabel = if self.paused { "▶ resume" } else { "⏸ pause" };
+                    let plabel = if self.paused { "▶ resume" } else { "■ pause" };
                     if ui.add(egui::Button::new(RichText::new(plabel).color(text_sec()).size(12.0))
                         .fill(bg_input()).stroke(Stroke::new(1.0, border())).rounding(Rounding::same(5.0))).clicked() {
                         self.paused = !self.paused;
@@ -238,7 +238,7 @@ impl MonitorPanel {
 
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(format!("{} transactions", rows.len())).color(text_mut()).size(11.0));
-                    if self.paused { ui.label(RichText::new("⏸ paused").color(c_warn()).size(11.0)); }
+                    if self.paused { ui.label(RichText::new("■ paused").color(c_warn()).size(11.0)); }
                 });
                 ui.add_space(6.0);
 
@@ -252,7 +252,7 @@ impl MonitorPanel {
                 ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                     for (chain, hash, native, usd, fresh) in &rows {
                         let bg = if *fresh { bg_item_sel() } else { bg_panel() };
-                        let r = egui::Frame::none().fill(bg).rounding(Rounding::same(6.0))
+                        let r = egui::Frame::none().fill(bg).rounding(Rounding::same(corner()))
                             .inner_margin(Margin::symmetric(12.0, 8.0))
                             .stroke(Stroke::new(1.0, if *fresh { accent_dark() } else { border() }))
                             .show(ui, |ui| {

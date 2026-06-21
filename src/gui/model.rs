@@ -94,8 +94,8 @@ impl Kind {
             Kind::BtcAddress   => "Ƀ",
             Kind::EthAddress   => "Ξ",
             Kind::Transaction  => "⇄",
-            Kind::MacAddress   => "⌗",
-            Kind::Coordinate   => "⌖",
+            Kind::MacAddress   => "▦",
+            Kind::Coordinate   => "⊕",
             Kind::Document     => "❏",
             Kind::Service      => "⚙",
             Kind::OperatingSystem => "⊞",
@@ -180,6 +180,8 @@ pub struct Entity {
     pub note:   String,
     /// 0 = none, 1 = important (red), 2 = verified (green), 3 = target (orange).
     pub flag:   u8,
+    /// Optional path to an image rendered on the node face (a screenshot, a photo…).
+    pub image:  Option<String>,
     /// Time (egui seconds) the node was first drawn — drives the spawn animation.
     /// Not serialised; `None` means "animate from the next frame".
     pub anim_start: Option<f64>,
@@ -220,7 +222,7 @@ impl Graph {
         self.entities.insert(id, Entity {
             id, kind, value: value.into(), props: Vec::new(),
             pos, vel: Vec2::ZERO, pinned: false,
-            note: String::new(), flag: 0, anim_start: None,
+            note: String::new(), flag: 0, image: None, anim_start: None,
         });
         id
     }
@@ -285,7 +287,7 @@ impl Graph {
             entities: self.entities.values().map(|e| EntityData {
                 id: e.id, kind: e.kind, value: e.value.clone(), props: e.props.clone(),
                 x: e.pos.x, y: e.pos.y, pinned: e.pinned,
-                note: e.note.clone(), flag: e.flag,
+                note: e.note.clone(), flag: e.flag, image: e.image.clone(),
             }).collect(),
             edges: self.edges.iter().map(|e| EdgeData {
                 from: e.from, to: e.to, label: e.label.clone(),
@@ -299,7 +301,7 @@ impl Graph {
             entities.insert(e.id, Entity {
                 id: e.id, kind: e.kind, value: e.value, props: e.props,
                 pos: Pos2::new(e.x, e.y), vel: Vec2::ZERO, pinned: e.pinned,
-                note: e.note, flag: e.flag, anim_start: None,
+                note: e.note, flag: e.flag, image: e.image, anim_start: None,
             });
         }
         let edges = d.edges.into_iter()
@@ -331,6 +333,8 @@ pub struct EntityData {
     pub note:   String,
     #[serde(default)]
     pub flag:   u8,
+    #[serde(default)]
+    pub image:  Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]

@@ -3,34 +3,47 @@
 //! transforms. Ships with a second "Operations" workspace that drives the
 //! `parasite` recon engine.
 
+mod ai;
 mod app;
 mod browser;
 mod canvas;
+mod cases;
+mod dossier;
 mod engine;
 mod export;
 mod geoint;
+mod i18n;
 mod install;
 mod keys;
+mod lisp;
 mod logo;
 mod model;
 mod monitor;
 mod mtgx;
+mod net;
+mod pivots;
 mod settings;
 mod theme;
+mod toolbox;
 mod transforms;
+mod watch;
 
 use eframe::egui::{self, Color32, FontFamily, FontId, Margin, RichText, Rounding, Stroke};
 use settings::Settings;
 use theme::*;
 
 #[derive(Clone, Copy, PartialEq)]
-enum AppMode { Graph, Geo, Monitor, Browser }
+enum AppMode { Graph, Geo, Monitor, Dossier, Cases, Watch, Toolbox, Browser }
 
 struct Shell {
     mode:          AppMode,
     graph:         app::GraphPanel,
     geo:           geoint::GeoPanel,
     monitor:       monitor::MonitorPanel,
+    dossier:       dossier::DossierPanel,
+    cases:         cases::CasesPanel,
+    watch:         watch::WatchPanel,
+    toolbox:       toolbox::ToolboxPanel,
     browser:       browser::BrowserPanel,
     embed:         Embed,
     settings:      Settings,
@@ -39,14 +52,18 @@ struct Shell {
 
 impl Shell {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        theme::setup_fonts(&cc.egui_ctx);
         let settings = Settings::load();
+        theme::apply_font(&cc.egui_ctx, &settings.font_path);
         settings.apply(&cc.egui_ctx);
         Self {
             mode: AppMode::Graph,
             graph: app::GraphPanel::new(),
             geo: geoint::GeoPanel::new(),
             monitor: monitor::MonitorPanel::new(),
+            dossier: dossier::DossierPanel::new(),
+            cases: cases::CasesPanel::new(),
+            watch: watch::WatchPanel::new(),
+            toolbox: toolbox::ToolboxPanel::new(),
             browser: browser::BrowserPanel::new(),
             embed: Embed::new(),
             show_settings: false,
@@ -59,10 +76,13 @@ impl Shell {
 /// overlay (the Shell switches to the ParasiteGoogle tab and shows the browser);
 /// elsewhere it opens a standalone window. The browser only ever appears as a
 /// result of an explicit open like this — never on its own.
-pub fn app_open(url: &str) {
-    nav_write(url);
-    if let Ok(mut g) = pending_open().lock() { *g = Some(url.to_string()); }
-    if !hypr_available() { launch_browser(url); }
+pub fn app_open(input: &str) {
+    // resolve a raw query to a search URL on the chosen engine, and enforce the
+    // "block insecure HTTP" policy (returns None → blocked, do nothing).
+    let Some(url) = net::resolve_nav(input) else { return };
+    nav_write(&url);
+    if let Ok(mut g) = pending_open().lock() { *g = Some(url.clone()); }
+    if !hypr_available() { launch_browser(&url); }
 }
 
 /// A URL waiting to be opened in the overlay (set by `app_open`, consumed by the Shell).
@@ -356,20 +376,24 @@ impl eframe::App for Shell {
                     ui.label(RichText::new("parasite").color(text_pri()).strong().size(15.0));
                     ui.add_space(14.0);
 
-                    mode_tab(ui, &mut self.mode, AppMode::Graph, "◇ Graph");
-                    mode_tab(ui, &mut self.mode, AppMode::Geo, "◎ GEOINT");
-                    mode_tab(ui, &mut self.mode, AppMode::Monitor, "⏱ Monitor");
-                    mode_tab(ui, &mut self.mode, AppMode::Browser, "🌐 ParasiteGoogle");
+                    mode_tab(ui, &mut self.mode, AppMode::Graph, &format!("◇ {}", i18n::tr("tab.graph")));
+                    mode_tab(ui, &mut self.mode, AppMode::Geo, &format!("◎ {}", i18n::tr("tab.geo")));
+                    mode_tab(ui, &mut self.mode, AppMode::Monitor, &format!("◷ {}", i18n::tr("tab.monitor")));
+                    mode_tab(ui, &mut self.mode, AppMode::Dossier, &format!("▤ {}", i18n::tr("tab.dossier")));
+                    mode_tab(ui, &mut self.mode, AppMode::Cases, &format!("▦ {}", i18n::tr("tab.cases")));
+                    mode_tab(ui, &mut self.mode, AppMode::Watch, &format!("⊚ {}", i18n::tr("tab.watch")));
+                    mode_tab(ui, &mut self.mode, AppMode::Toolbox, &format!("⊞ {}", i18n::tr("tab.toolbox")));
+                    mode_tab(ui, &mut self.mode, AppMode::Browser, "⊕ ParasiteGoogle");
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let gear = ui.add(egui::Button::new(
-                            RichText::new("⚙ Settings").color(text_sec()).size(12.0))
+                            RichText::new(format!("⚙ {}", i18n::tr("shell.settings"))).color(text_sec()).size(12.0))
                             .fill(Color32::TRANSPARENT).stroke(Stroke::new(1.0, border()))
                             .rounding(Rounding::same(5.0)));
                         if gear.hovered() { ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand); }
                         if gear.clicked() { self.show_settings = !self.show_settings; }
                         ui.add_space(8.0);
-                        if ui.add(egui::Button::new(RichText::new("? Help").color(text_sec()).size(12.0))
+                        if ui.add(egui::Button::new(RichText::new(format!("? {}", i18n::tr("shell.help"))).color(text_sec()).size(12.0))
                             .fill(Color32::TRANSPARENT).stroke(Stroke::new(1.0, border()))
                             .rounding(Rounding::same(5.0))).clicked()
                         {
@@ -383,7 +407,29 @@ impl eframe::App for Shell {
             AppMode::Graph   => self.graph.ui(ctx),
             AppMode::Geo     => self.geo.ui(ctx),
             AppMode::Monitor => self.monitor.ui(ctx),
+            AppMode::Dossier => self.dossier.ui(ctx),
+            AppMode::Cases   => self.cases.ui(ctx),
+            AppMode::Watch   => self.watch.ui(ctx),
+            AppMode::Toolbox => self.toolbox.ui(ctx),
             AppMode::Browser => self.browser.ui(ctx),
+        }
+
+        // dossier → graph sync (runs regardless of the active tab)
+        if let Some(seed) = self.dossier.take_seed() {
+            self.graph.ingest_dossier(seed);
+        }
+        // cases ⇄ graph
+        if let Some(name) = self.cases.take_save() {
+            let data = self.graph.export_case();
+            self.cases.write_case(&name, &data);
+        }
+        if let Some(data) = self.cases.take_open() {
+            self.graph.import_case(data);
+            self.mode = AppMode::Graph;
+        }
+        // watch → graph
+        if let Some((kind, value)) = self.watch.take_graph() {
+            self.graph.add_node(kind, value);
         }
 
         // don't draw settings/welcome over a video recording
@@ -427,12 +473,48 @@ impl Shell {
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
-            .default_width(360.0)
+            .default_width(390.0)
             .anchor(egui::Align2::RIGHT_TOP, [-16.0, 52.0])
             .frame(egui::Frame::window(&ctx.style()).fill(bg_panel()).stroke(Stroke::new(1.0, border())))
             .show(ctx, |ui| {
+                egui::ScrollArea::vertical()
+                    .max_height(ctx.screen_rect().height() - 150.0)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
                 ui.add_space(4.0);
-                ui.label(RichText::new("INTERFACE").color(text_mut()).size(10.0).strong());
+                ui.label(RichText::new(i18n::tr("set.language")).color(text_mut()).size(10.0).strong());
+                ui.add_space(4.0);
+                egui::ComboBox::from_id_salt("lang_combo")
+                    .selected_text(RichText::new(self.settings.lang.label()).color(text_pri()))
+                    .width(330.0)
+                    .show_ui(ui, |ui| {
+                        for l in i18n::Lang::ALL {
+                            if ui.selectable_value(&mut self.settings.lang, l,
+                                RichText::new(l.label()).color(text_pri())).clicked() { changed = true; }
+                        }
+                    });
+
+                ui.label(RichText::new("INTERFACE DESIGN").color(text_mut()).size(10.0).strong());
+                ui.add_space(4.0);
+                egui::ComboBox::from_id_salt("design_combo")
+                    .selected_text(RichText::new(self.settings.design.label()).color(text_pri()))
+                    .width(330.0)
+                    .show_ui(ui, |ui| {
+                        for d in theme::Design::ALL {
+                            if ui.selectable_value(&mut self.settings.design, d,
+                                RichText::new(d.label()).color(text_pri())).clicked() {
+                                changed = true;
+                                // jump to the matching palette for a cohesive one-click look
+                                if d == theme::Design::Cupertino { self.settings.theme = "Cupertino".into(); }
+                                self.settings.accent = None;
+                            }
+                        }
+                    });
+                ui.label(RichText::new("Cupertino = clean & light · Retro Unix = old-Linux Motif/CDE grey · Stock = original. Theme below is independent.")
+                    .color(text_mut()).size(10.0));
+
+                ui.add_space(10.0);
+                ui.label(RichText::new(i18n::tr("set.interface")).color(text_mut()).size(10.0).strong());
                 ui.add_space(4.0);
                 egui::ComboBox::from_id_salt("variant_combo")
                     .selected_text(RichText::new(self.settings.variant.label()).color(text_pri()))
@@ -444,8 +526,14 @@ impl Shell {
                         }
                     });
 
+                let palette_locked = self.settings.design.forces_palette().is_some();
                 ui.add_space(10.0);
-                ui.label(RichText::new("THEME").color(text_mut()).size(10.0).strong());
+                if palette_locked {
+                    ui.label(RichText::new("⊘ this design uses its own fixed palette — theme & accent don't apply")
+                        .color(c_warn()).size(10.5).italics());
+                }
+                ui.add_enabled_ui(!palette_locked, |ui| {
+                ui.label(RichText::new(i18n::tr("set.theme")).color(text_mut()).size(10.0).strong());
                 ui.add_space(4.0);
                 egui::ComboBox::from_id_salt("theme_combo")
                     .selected_text(RichText::new(&self.settings.theme).color(text_pri()))
@@ -461,7 +549,7 @@ impl Shell {
                     });
 
                 ui.add_space(10.0);
-                ui.label(RichText::new("ACCENT COLOUR").color(text_mut()).size(10.0).strong());
+                ui.label(RichText::new(i18n::tr("set.accent")).color(text_mut()).size(10.0).strong());
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     let mut rgb = self.settings.accent.unwrap_or_else(|| {
@@ -485,37 +573,56 @@ impl Shell {
                         if r.hovered() { ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand); }
                     }
                 });
+                });
 
                 ui.add_space(12.0);
-                ui.label(RichText::new("CANVAS").color(text_mut()).size(10.0).strong());
+                ui.label(RichText::new(i18n::tr("set.canvas")).color(text_mut()).size(10.0).strong());
                 ui.add_space(4.0);
                 changed |= ui.add(egui::Slider::new(&mut self.settings.node_radius, 12.0..=40.0)
                     .text("node size")).changed();
                 changed |= ui.add(egui::Slider::new(&mut self.settings.font_scale, 0.8..=1.5)
                     .text("font scale")).changed();
-
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("node style").color(text_pri()).size(12.0));
-                    egui::ComboBox::from_id_salt("style_combo")
-                        .selected_text(RichText::new(self.settings.node_style.label()).color(text_pri()))
-                        .show_ui(ui, |ui| {
-                            for s in theme::NodeStyle::ALL {
-                                if ui.selectable_value(&mut self.settings.node_style, s,
-                                    RichText::new(s.label()).color(text_pri())).clicked() { changed = true; }
-                            }
-                        });
+                    ui.add_sized([70.0, 18.0], egui::Label::new(RichText::new("UI font").color(text_sec()).size(11.0)));
+                    ui.add(egui::TextEdit::singleline(&mut self.settings.font_path)
+                        .desired_width(180.0).hint_text("path to a .ttf/.otf  (empty = default)")
+                        .font(FontId::new(11.0, FontFamily::Monospace)));
+                    if ui.button(RichText::new("↻ apply").color(accent()).size(11.0)).clicked() {
+                        theme::apply_font(ctx, &self.settings.font_path);
+                        self.settings.save();
+                    }
                 });
+                ui.label(RichText::new("custom font is tried first; point it at an emoji font for coloured icons")
+                    .color(text_mut()).size(10.0));
+
+                // node shape/style are driven by the Cupertino/Maltego designs, so hide them there
+                let custom_nodes = self.settings.design == theme::Design::Stock;
+                if custom_nodes {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("node style").color(text_pri()).size(12.0));
+                        egui::ComboBox::from_id_salt("style_combo")
+                            .selected_text(RichText::new(self.settings.node_style.label()).color(text_pri()))
+                            .show_ui(ui, |ui| {
+                                for s in theme::NodeStyle::ALL {
+                                    if ui.selectable_value(&mut self.settings.node_style, s,
+                                        RichText::new(s.label()).color(text_pri())).clicked() { changed = true; }
+                                }
+                            });
+                    });
+                }
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("node shape").color(text_pri()).size(12.0));
-                    egui::ComboBox::from_id_salt("shape_combo")
-                        .selected_text(RichText::new(self.settings.node_shape.label()).color(text_pri()))
-                        .show_ui(ui, |ui| {
-                            for s in theme::NodeShape::ALL {
-                                if ui.selectable_value(&mut self.settings.node_shape, s,
-                                    RichText::new(s.label()).color(text_pri())).clicked() { changed = true; }
-                            }
-                        });
-                    ui.add_space(8.0);
+                    if custom_nodes {
+                        ui.label(RichText::new("node shape").color(text_pri()).size(12.0));
+                        egui::ComboBox::from_id_salt("shape_combo")
+                            .selected_text(RichText::new(self.settings.node_shape.label()).color(text_pri()))
+                            .show_ui(ui, |ui| {
+                                for s in theme::NodeShape::ALL {
+                                    if ui.selectable_value(&mut self.settings.node_shape, s,
+                                        RichText::new(s.label()).color(text_pri())).clicked() { changed = true; }
+                                }
+                            });
+                        ui.add_space(8.0);
+                    }
                     ui.label(RichText::new("background").color(text_pri()).size(12.0));
                     egui::ComboBox::from_id_salt("bg_combo")
                         .selected_text(RichText::new(self.settings.bg_style.label()).color(text_pri()))
@@ -539,6 +646,12 @@ impl Shell {
                     RichText::new("node icons").color(text_pri())).changed();
                 changed |= ui.checkbox(&mut self.settings.color_clusters,
                     RichText::new("colour nodes by cluster").color(text_pri())).changed();
+                changed |= ui.checkbox(&mut self.settings.glow,
+                    RichText::new("node glow").color(text_pri())).changed();
+                changed |= ui.checkbox(&mut self.settings.animations,
+                    RichText::new("animations").color(text_pri())).changed();
+                changed |= ui.add(egui::Slider::new(&mut self.settings.anim_speed, 0.25..=3.0)
+                    .text("animation speed")).changed();
 
                 ui.add_space(8.0);
                 ui.label(RichText::new("GEOINT MAP").color(text_mut()).size(10.0).strong());
@@ -551,17 +664,39 @@ impl Shell {
                     RichText::new("edge labels").color(text_pri())).changed();
 
                 ui.add_space(12.0);
-                ui.collapsing(RichText::new("🔑 API KEYS (optional)").color(text_mut()).size(10.0).strong(), |ui| {
+                ui.label(RichText::new("NETWORK").color(text_mut()).size(10.0).strong());
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.add_sized([90.0, 18.0], egui::Label::new(RichText::new("proxy").color(text_sec()).size(11.5)));
+                    changed |= ui.add(egui::TextEdit::singleline(&mut self.settings.proxy)
+                        .desired_width(220.0).hint_text("socks5://127.0.0.1:9050 or http://host:port")
+                        .font(FontId::new(11.5, FontFamily::Monospace))).changed();
+                });
+                ui.label(RichText::new("routes ALL requests through this proxy/VPN — useful if sites block your region")
+                    .color(text_mut()).size(10.0));
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("search engine").color(text_sec()).size(11.5));
+                    for (id, label) in [("duckduckgo", "DuckDuckGo"), ("google", "Google")] {
+                        if ui.selectable_label(self.settings.search_engine == id,
+                            RichText::new(label).color(text_pri()).size(12.0)).clicked()
+                        { self.settings.search_engine = id.to_string(); changed = true; }
+                    }
+                });
+                changed |= ui.checkbox(&mut self.settings.block_http,
+                    RichText::new("block insecure HTTP sites").color(text_pri())).changed();
+
+                ui.add_space(12.0);
+                ui.collapsing(RichText::new("❖ API KEYS (optional)").color(text_mut()).size(10.0).strong(), |ui| {
                     ui.label(RichText::new("Enable extra integrations. Keys stay local in your settings file.")
                         .color(text_mut()).size(10.5));
                     ui.add_space(4.0);
                     let field = |ui: &mut egui::Ui, label: &str, val: &mut String, changed: &mut bool| {
                         ui.horizontal(|ui| {
-                            ui.add_sized([90.0, 18.0], egui::Label::new(
-                                RichText::new(label).color(text_sec()).size(11.5)));
+                            ui.add_sized([108.0, 18.0], egui::Label::new(
+                                RichText::new(label).color(text_sec()).size(11.0)));
                             *changed |= ui.add(egui::TextEdit::singleline(val)
-                                .desired_width(200.0).password(true)
-                                .font(FontId::new(11.5, FontFamily::Monospace))).changed();
+                                .desired_width(190.0).password(true)
+                                .font(FontId::new(11.0, FontFamily::Monospace))).changed();
                         });
                     };
                     field(ui, "Shodan",     &mut self.settings.api.shodan,     &mut changed);
@@ -569,6 +704,58 @@ impl Shell {
                     field(ui, "HaveIBeenPwned", &mut self.settings.api.hibp,   &mut changed);
                     field(ui, "Hunter.io",  &mut self.settings.api.hunter,     &mut changed);
                     field(ui, "AbuseIPDB",  &mut self.settings.api.abuseipdb,  &mut changed);
+                    ui.add_space(4.0);
+                    ui.collapsing(RichText::new("More providers").color(text_sec()).size(10.5).strong(), |ui| {
+                        field(ui, "SecurityTrails", &mut self.settings.api.securitytrails, &mut changed);
+                        field(ui, "GreyNoise",  &mut self.settings.api.greynoise,  &mut changed);
+                        field(ui, "IPinfo",     &mut self.settings.api.ipinfo,     &mut changed);
+                        field(ui, "BinaryEdge", &mut self.settings.api.binaryedge, &mut changed);
+                        field(ui, "FullHunt",   &mut self.settings.api.fullhunt,   &mut changed);
+                        field(ui, "LeakIX",     &mut self.settings.api.leakix,     &mut changed);
+                        field(ui, "IntelX",     &mut self.settings.api.intelx,     &mut changed);
+                        field(ui, "urlscan.io", &mut self.settings.api.urlscan,    &mut changed);
+                        field(ui, "ZoomEye",    &mut self.settings.api.zoomeye,    &mut changed);
+                        field(ui, "BuiltWith",  &mut self.settings.api.builtwith,  &mut changed);
+                        field(ui, "NumVerify",  &mut self.settings.api.numverify,  &mut changed);
+                        field(ui, "WhoisXML",   &mut self.settings.api.whoisxml,   &mut changed);
+                        field(ui, "Censys ID",  &mut self.settings.api.censys_id,  &mut changed);
+                        field(ui, "Censys secret", &mut self.settings.api.censys_secret, &mut changed);
+                    });
+                    ui.add_space(4.0);
+                    ui.label(RichText::new("AI — natural-language graph building").color(text_mut()).size(10.0).strong());
+                    // provider + model selector
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("provider").color(text_sec()).size(11.0));
+                        let cur = if self.settings.api.ai_provider.is_empty() { "auto".to_string() }
+                                  else { self.settings.api.ai_provider.clone() };
+                        egui::ComboBox::from_id_salt("ai_provider")
+                            .selected_text(RichText::new(cur).color(text_pri()).size(11.5))
+                            .show_ui(ui, |ui| {
+                                if ui.selectable_value(&mut self.settings.api.ai_provider, String::new(),
+                                    "auto (first with a key)").clicked() { changed = true; }
+                                for (id, name, _) in ai::PROVIDERS {
+                                    if ui.selectable_value(&mut self.settings.api.ai_provider, id.to_string(),
+                                        *name).clicked() { changed = true; }
+                                }
+                            });
+                    });
+                    ui.horizontal(|ui| {
+                        ui.add_sized([90.0, 18.0], egui::Label::new(
+                            RichText::new("model").color(text_sec()).size(11.0)));
+                        let def = ai::PROVIDERS.iter().find(|p| p.0 == self.settings.api.ai_provider)
+                            .map(|p| p.2).unwrap_or("provider default");
+                        changed |= ui.add(egui::TextEdit::singleline(&mut self.settings.api.ai_model)
+                            .desired_width(200.0).hint_text(def)
+                            .font(FontId::new(11.5, FontFamily::Monospace))).changed();
+                    });
+                    field(ui, "Claude (Anthropic)", &mut self.settings.api.claude, &mut changed);
+                    field(ui, "Gemini (Google)",    &mut self.settings.api.gemini, &mut changed);
+                    field(ui, "OpenAI",     &mut self.settings.api.openai,     &mut changed);
+                    field(ui, "Mistral",    &mut self.settings.api.mistral,    &mut changed);
+                    field(ui, "DeepSeek",   &mut self.settings.api.deepseek,   &mut changed);
+                    field(ui, "Groq",       &mut self.settings.api.groq,       &mut changed);
+                    field(ui, "OpenRouter", &mut self.settings.api.openrouter, &mut changed);
+                    field(ui, "xAI (Grok)", &mut self.settings.api.xai,        &mut changed);
                 });
 
                 ui.add_space(8.0);
@@ -579,10 +766,11 @@ impl Shell {
                         changed = true;
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(RichText::new("🖥 Reinstall menu entry").color(text_sec()).size(11.0)).clicked() {
+                        if ui.button(RichText::new("▣ Reinstall menu entry").color(text_sec()).size(11.0)).clicked() {
                             let _ = install::install(true);
                         }
                     });
+                });
                 });
             });
 
@@ -630,7 +818,7 @@ impl Shell {
                             ui.label(RichText::new(".osint").color(accent()).strong().size(30.0));
                         });
                         ui.add_space(2.0);
-                        ui.label(RichText::new("an open-source, graph-based OSINT toolkit — a free Maltego alternative")
+                        ui.label(RichText::new(i18n::tr("wel.tagline"))
                             .color(text_sec()).size(12.5));
                         ui.add_space(20.0);
                     });
@@ -639,7 +827,7 @@ impl Shell {
                     let modes = [
                         ("◇", "Graph", "entities + 110 transforms", accent()),
                         ("◎", "GEOINT", "maps, EXIF GPS, satellite", c_info()),
-                        ("⏱", "Monitor", "live crypto transactions", c_ok()),
+                        ("◷", "Monitor", "live crypto transactions", c_ok()),
                     ];
                     ui.columns(3, |cols| {
                         for (i, (icon, name, desc, col)) in modes.iter().enumerate() {
@@ -661,20 +849,20 @@ impl Shell {
 
                     ui.add_space(16.0);
                     ui.vertical_centered(|ui| {
-                        ui.label(RichText::new("TRY IT")
+                        ui.label(RichText::new(i18n::tr("wel.try"))
                             .color(accent()).size(10.5).strong());
                         ui.add_space(4.0);
-                        ui.label(RichText::new("Add a Username \"torvalds\" → right-click → Hunt Accounts")
+                        ui.label(RichText::new(i18n::tr("wel.try_hint"))
                             .color(text_sec()).size(12.0));
                         ui.add_space(18.0);
 
                         let go = ui.add_sized([200.0, 38.0], egui::Button::new(
-                            RichText::new("▶  Get started").color(Color32::WHITE).strong().size(14.0))
+                            RichText::new(format!("▶  {}", i18n::tr("wel.start"))).color(Color32::WHITE).strong().size(14.0))
                             .fill(accent()).rounding(Rounding::same(8.0)));
                         if go.hovered() { ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand); }
                         if go.clicked() { dismissed = true; }
                         ui.add_space(12.0);
-                        ui.label(RichText::new("⚠  for authorized security testing & research only")
+                        ui.label(RichText::new(format!("⚠  {}", i18n::tr("wel.warn")))
                             .color(text_mut()).size(10.5).italics());
                     });
                 });
@@ -743,30 +931,7 @@ pub fn run() -> eframe::Result<()> {
 }
 
 fn load_icon() -> egui::IconData {
-    // Rasterise the virus logo (body + spots) into a 64×64 window icon.
-    let size: usize = 64;
-    let cx = 32.0; let cy = 32.0; let s = 30.0 / 175.0; // svg→icon scale
-    let body = accent(); let bg = bg_app();
-    let spots  = [(295.0,155.0,22.0),(385.0,170.0,16.0),(315.0,245.0,24.0),
-                  (390.0,240.0,13.0),(355.0,195.0,10.0),(300.0,205.0,8.0)];
-    let hl     = [(290.0,150.0,9.0),(382.0,167.0,6.0),(310.0,240.0,10.0),(388.0,237.0,5.0)];
-
-    let mut rgba = vec![0u8; size * size * 4];
-    for y in 0..size {
-        for x in 0..size {
-            let sx = 340.0 + (x as f32 - cx) / s;
-            let sy = 200.0 + (y as f32 - cy) / s;
-            let d2 = |px: f32, py: f32| (sx - px).powi(2) + (sy - py).powi(2);
-            let mut col: Option<Color32> = None;
-            if d2(340.0, 200.0) <= 110.0 * 110.0 { col = Some(body); }
-            if d2(340.0, 200.0) <= 96.0 * 96.0   { col = Some(bg);   }
-            for (px, py, r) in spots { if d2(px, py) <= r * r { col = Some(body); } }
-            for (px, py, r) in hl    { if d2(px, py) <= r * r { col = Some(bg);   } }
-            if let Some(c) = col {
-                let i = (y * size + x) * 4;
-                rgba[i] = c.r(); rgba[i+1] = c.g(); rgba[i+2] = c.b(); rgba[i+3] = 255;
-            }
-        }
-    }
-    egui::IconData { rgba, width: size as u32, height: size as u32 }
+    // Rasterise the v5 "cell" logo (three nested blobs) into a 128×128 icon.
+    let size: usize = 128;
+    egui::IconData { rgba: logo::icon_rgba(size), width: size as u32, height: size as u32 }
 }

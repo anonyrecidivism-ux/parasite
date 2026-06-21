@@ -18,14 +18,17 @@ fn icon_svg() -> String {
 }
 
 pub const BANNER: &str = r#"
-   ╔═══════════════════════════════════════════════╗
-       ◍  p a r a s i t e   —   OSINT graph
-       a free, open-source Maltego alternative
-   ╚═══════════════════════════════════════════════╝
-        \\   ◍╍╍◍        infect · expand · pivot
-         \\ ◍╍◍ ◍╍◍
-          ◍╍◍ ◍ ◍╍◍     74+ transforms · 11 machines
-         ◍╍◍ ◍╍◍ ◍
+   ╔══════════════════════════════════════════════════╗
+   ║   ▟█▙   P·A·R·A·S·I·T·E  .osint        v1.0       ║
+   ║  ▟███▙  a free, open-source Maltego alternative   ║
+   ╚══════════════════════════════════════════════════╝
+            ◜◝   ◉───◉        graph · geoint · monitor · dossier
+           ◟◞  ◉──◉ ◉──◉      cases · watch · toolbox · browser
+              ◉──◉ ◉ ◉──◉     413 transforms · 19 machines · 25 entities
+             ◉──◉ ◉──◉ ◉      λ Insights rule engine (no AI)
+           ◉    ◉───◉    ◉    8 AI models · proxy · EN/RU/UK
+                                3 looks: Stock · Cupertino · Retro Unix
+                                ▸ infect · expand · pivot ◂
 "#;
 
 pub fn print_banner() {
@@ -89,7 +92,7 @@ pub fn setup() {
     }
 
     // Python tools via pip (user site).
-    let pip_tools = ["holehe", "maigret", "sherlock-project"];
+    let pip_tools = ["holehe", "maigret", "sherlock-project", "bloodhound"];
     let pip = if Command::new("pip").arg("--version").output().is_ok() { "pip" } else { "pip3" };
     for t in pip_tools {
         print!("  • {t} … ");
