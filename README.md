@@ -240,9 +240,9 @@ them side by side in the same directory is enough.
   WebKitGTK browser is Linux-only). Build with
   `cargo build --release --bin parasitephp --bin parasite`.
 
-Pre-built binaries for **Linux, macOS (Intel + Apple Silicon) and Windows** are
-produced by the GitHub Actions release workflow — push a `v*` tag (or run it
-manually) and the platform bundles are attached to the release.
+Pre-built binaries for **Linux, macOS (Apple Silicon; Intel runs via Rosetta 2)
+and Windows** are produced by the GitHub Actions release workflow — push a `v*`
+tag (or run it manually) and the platform bundles are attached to the release.
 
 Optional: `parasitephp --setup` auto-installs OSINT CLI tools (holehe, sherlock,
 maigret, subfinder, waybackurls) that some transforms shell out to. `ffmpeg` is
