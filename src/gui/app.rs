@@ -2,7 +2,7 @@
 //! palette, the canvas, the details/transform panel and the async transform
 //! runner together.
 
-use eframe::egui::{self, Color32, FontFamily, FontId, Margin, Pos2, RichText,
+use egui::{self, Color32, FontFamily, FontId, Margin, Pos2, RichText,
                    Rounding, ScrollArea, Stroke, TextEdit};
 use std::sync::mpsc::{Receiver, Sender};
 
@@ -3240,6 +3240,12 @@ pub(crate) fn native_open_file() -> Option<String> {
     let out = Command::new("powershell").args(["-NoProfile", "-Command", ps]).output().ok()?;
     let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if !p.is_empty() { Some(p) } else { None }
+}
+
+/// Platforms without a native desktop file dialog (e.g. Android) — no-op.
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+pub(crate) fn native_open_file() -> Option<String> {
+    None
 }
 
 fn kind_from_name(name: &str) -> Option<Kind> {

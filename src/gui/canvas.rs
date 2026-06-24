@@ -3,8 +3,8 @@
 
 use std::collections::HashSet;
 
-use eframe::egui::{self, Color32, FontFamily, FontId, Pos2, Rect, Rounding, Sense, Stroke, Vec2};
-use eframe::egui::epaint::Mesh;
+use egui::{self, Color32, FontFamily, FontId, Pos2, Rect, Rounding, Sense, Stroke, Vec2};
+use egui::epaint::Mesh;
 
 use super::model::Graph;
 use super::theme::*;
@@ -915,7 +915,7 @@ pub fn radial_layout(graph: &mut Graph) {
 mod tests {
     use super::auto_layout;
     use super::super::model::{Graph, Kind};
-    use eframe::egui::Pos2;
+    use egui::Pos2;
 
     #[test]
     fn layout_stays_finite_with_coincident_nodes() {

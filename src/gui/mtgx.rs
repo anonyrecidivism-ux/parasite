@@ -5,7 +5,7 @@
 
 use std::io::{self, Read, Write};
 
-use eframe::egui::Pos2;
+use egui::Pos2;
 use regex::Regex;
 
 use super::model::{Graph, Kind};
@@ -180,7 +180,7 @@ mod tests {
 
     #[test]
     fn export_import_roundtrip() {
-        use eframe::egui::Pos2;
+        use egui::Pos2;
         let mut g = Graph::new();
         let a = g.add(Kind::Domain, "example.com", Pos2::ZERO);
         let b = g.add(Kind::Ip, "93.184.216.34", Pos2::ZERO);

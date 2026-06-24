@@ -7,7 +7,7 @@
 //! branded home screen that opens that browser; every "open in browser" action in
 //! parasite launches it too.
 
-use eframe::egui::{self, FontFamily, FontId, Margin, RichText, Rounding, Stroke, TextEdit};
+use egui::{self, FontFamily, FontId, Margin, RichText, Rounding, Stroke, TextEdit};
 
 use super::theme::*;
 

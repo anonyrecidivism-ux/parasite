@@ -1,7 +1,7 @@
 //! User-customisable settings: theme, accent colour, node size, grid, fonts —
 //! persisted to `~/.config/parasite/settings.json` so they survive restarts.
 
-use eframe::egui::{self, Color32};
+use egui::{self, Color32};
 use serde::{Deserialize, Serialize};
 
 use super::i18n::{self, Lang};

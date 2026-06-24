@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::f64::consts::PI;
 use std::sync::mpsc::{Receiver, Sender};
 
-use eframe::egui::{self, Color32, FontFamily, FontId, Margin, Pos2, Rect, RichText,
+use egui::{self, Color32, FontFamily, FontId, Margin, Pos2, Rect, RichText,
                    Rounding, ScrollArea, Sense, Stroke, TextEdit, Vec2};
 
 use super::theme::*;

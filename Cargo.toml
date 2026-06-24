@@ -47,7 +47,20 @@ image               = { version = "0.25", default-features = false, features = [
 zip                 = { version = "2", default-features = false, features = ["deflate"] }
 kamadak-exif        = "0.5"
 
-eframe              = { version = "0.29", default-features = true }
+# egui is depended on directly so the GUI is windowing-backend agnostic: eframe
+# drives it on desktop, a winit+wgpu loop drives it on Android.
+egui                = "0.29"
+
+# ── Android: the app ships as a cdylib loaded by a NativeActivity. ─────────────
+[lib]
+name       = "parasite"
+crate-type = ["cdylib"]
+path       = "src/android_lib.rs"
+
+# Desktop entry uses eframe; Android replaces it with its own winit/wgpu loop, so
+# eframe (and its native windowing deps) are excluded from the Android build.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+eframe = { version = "0.29", default-features = true }
 
 # ParasiteGoogle real-browser deps — WebKitGTK (the engine behind GNOME Web),
 # via the open-source gtk-rs / webkit2gtk bindings. Linux only.
@@ -55,8 +68,48 @@ eframe              = { version = "0.29", default-features = true }
 gtk         = { version = "0.18", package = "gtk" }
 webkit2gtk  = { version = "2.0", features = ["v2_40"] }
 
+# Android-only windowing/render stack + activity glue.
+[target.'cfg(target_os = "android")'.dependencies]
+winit            = { version = "0.30", features = ["android-native-activity"] }
+android-activity = { version = "0.6", features = ["native-activity"] }
+# wgpu's vulkan/gles backends are auto-enabled for the Android target, so we
+# don't request them as features (they aren't toggleable). egui-wgpu pulls wgpu.
+egui-winit       = { version = "0.29", default-features = false }
+egui-wgpu        = { version = "0.29", features = ["winit"] }
+raw-window-handle = "0.6"
+pollster         = "0.3"
+log              = "0.4"
+android_logger   = "0.14"
+
 [profile.release]
 opt-level     = 3
 lto           = true
 codegen-units = 1
 strip         = true
+
+# ── cargo-apk packaging ───────────────────────────────────────────────────────
+[package.metadata.android]
+package = "com.parasite.osint"
+build_targets = ["aarch64-linux-android"]
+apk_name = "parasite-osint"
+strip = "strip"
+
+[package.metadata.android.sdk]
+min_sdk_version = 24
+target_sdk_version = 34
+
+[package.metadata.android.application]
+label = "Parasite OSINT"
+
+# Release signing. The keystore is local-only (self-signed) — generate your own
+# for distribution; never commit a production keystore.
+[package.metadata.android.signing.release]
+path = "release.keystore"
+keystore_password = "parasite"
+
+# OSINT transforms need the network.
+[[package.metadata.android.uses_permission]]
+name = "android.permission.INTERNET"
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.ACCESS_NETWORK_STATE"

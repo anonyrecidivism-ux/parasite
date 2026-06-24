@@ -1,6 +1,6 @@
 //! Graph data model — entities (nodes) and edges, à la Maltego.
 
-use eframe::egui::{Color32, Pos2, Vec2};
+use egui::{Color32, Pos2, Vec2};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

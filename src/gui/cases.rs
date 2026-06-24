@@ -2,7 +2,7 @@
 //! the graph (plus free-text notes) on disk; you switch between them, and the
 //! active case's graph is loaded into the Graph workspace.
 
-use eframe::egui::{self, Color32, Margin, RichText, Rounding, ScrollArea, Stroke};
+use egui::{self, Color32, Margin, RichText, Rounding, ScrollArea, Stroke};
 
 use super::i18n;
 use super::model::GraphData;

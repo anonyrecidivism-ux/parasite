@@ -2,7 +2,7 @@
 //! JWT decoder, username/name variant generators, a Google-dork builder and a
 //! coordinate converter. Everything runs locally, no network, no keys.
 
-use eframe::egui::{self, Color32, FontId, Margin, RichText, Rounding, ScrollArea, Stroke};
+use egui::{self, Color32, FontId, Margin, RichText, Rounding, ScrollArea, Stroke};
 
 use super::i18n;
 use super::theme::*;

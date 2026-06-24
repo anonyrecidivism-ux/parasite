@@ -244,6 +244,32 @@ Pre-built binaries for **Linux, macOS (Apple Silicon; Intel runs via Rosetta 2)
 and Windows** are produced by the GitHub Actions release workflow — push a `v*`
 tag (or run it manually) and the platform bundles are attached to the release.
 
+### Android 📱
+
+parasite also runs on Android. There is no eframe there, so the GUI is driven by
+a **`winit` + `wgpu`** event loop instead — the entire graph workspace and all
+network transforms are reused unchanged. The desktop-only bits (embedded
+WebKitGTK browser, child-process launches, native file dialogs) are disabled and
+degrade to no-ops.
+
+A pre-built, signed APK (arm64-v8a, minSdk 24, targetSdk 34) is committed at
+**[`dist/parasite-osint.apk`](dist/parasite-osint.apk)**:
+
+```bash
+adb install -r dist/parasite-osint.apk
+```
+
+Build it yourself with [cargo-apk](https://crates.io/crates/cargo-apk):
+
+```bash
+rustup target add aarch64-linux-android
+cargo install cargo-apk
+export ANDROID_HOME=/path/to/sdk ANDROID_NDK_ROOT=/path/to/ndk
+cargo apk build --lib --release      # → target/release/apk/parasite-osint.apk
+```
+
+See **[ANDROID.md](ANDROID.md)** for the full toolchain setup and architecture.
+
 Optional: `parasitephp --setup` auto-installs OSINT CLI tools (holehe, sherlock,
 maigret, subfinder, waybackurls) that some transforms shell out to. `ffmpeg` is
 needed for **MP4 video export**.

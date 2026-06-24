@@ -3,7 +3,7 @@
 //! theme's accent colour, and can be animated (a gentle breathing pulse) for
 //! "thinking" indicators.
 
-use eframe::egui::{self, Color32, Pos2, Stroke, Vec2};
+use egui::{self, Color32, Pos2, Stroke, Vec2};
 
 use super::theme::*;
 

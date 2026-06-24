@@ -6,7 +6,7 @@
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::Duration;
 
-use eframe::egui::{self, Color32, Margin, RichText, Rounding, ScrollArea, Stroke};
+use egui::{self, Color32, Margin, RichText, Rounding, ScrollArea, Stroke};
 
 use super::i18n;
 use super::theme::*;

@@ -4,7 +4,7 @@
 //! means writing a new `Palette`. Several presets ship built-in, and the accent
 //! colour / node size / fonts can be customised on top of any preset.
 
-use eframe::egui::{self, Color32, FontFamily, FontId, Margin, Rounding, Stroke, Vec2};
+use egui::{self, Color32, FontFamily, FontId, Margin, Rounding, Stroke, Vec2};
 use serde::{Deserialize, Serialize};
 use std::cell::Cell;
 

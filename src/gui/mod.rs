@@ -28,14 +28,14 @@ mod toolbox;
 mod transforms;
 mod watch;
 
-use eframe::egui::{self, Color32, FontFamily, FontId, Margin, RichText, Rounding, Stroke};
+use egui::{self, Color32, FontFamily, FontId, Margin, RichText, Rounding, Stroke};
 use settings::Settings;
 use theme::*;
 
 #[derive(Clone, Copy, PartialEq)]
 enum AppMode { Graph, Geo, Monitor, Dossier, Cases, Watch, Toolbox, Browser }
 
-struct Shell {
+pub struct Shell {
     mode:          AppMode,
     graph:         app::GraphPanel,
     geo:           geoint::GeoPanel,
@@ -51,10 +51,12 @@ struct Shell {
 }
 
 impl Shell {
-    fn new(cc: &eframe::CreationContext<'_>) -> Self {
+    /// Construct the app against an existing egui context. Shared by the desktop
+    /// (eframe) and Android (winit/wgpu) entry points.
+    pub fn build(ctx: &egui::Context) -> Self {
         let settings = Settings::load();
-        theme::apply_font(&cc.egui_ctx, &settings.font_path);
-        settings.apply(&cc.egui_ctx);
+        theme::apply_font(ctx, &settings.font_path);
+        settings.apply(ctx);
         Self {
             mode: AppMode::Graph,
             graph: app::GraphPanel::new(),
@@ -69,6 +71,11 @@ impl Shell {
             show_settings: false,
             settings,
         }
+    }
+
+    #[cfg(not(target_os = "android"))]
+    fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        Self::build(&cc.egui_ctx)
     }
 }
 
@@ -351,12 +358,10 @@ fn embed_worker(shared: std::sync::Arc<std::sync::Mutex<EmbedShared>>) {
     }
 }
 
-impl eframe::App for Shell {
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        self.embed.shutdown();
-    }
-
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+impl Shell {
+    /// One UI frame. Frame-agnostic so both eframe (desktop) and the Android
+    /// winit/wgpu loop can drive it with the same egui context.
+    pub fn ui(&mut self, ctx: &egui::Context) {
         // a link/search was triggered → switch to the browser tab and open it
         if let Some(_url) = pending_open().lock().ok().and_then(|mut g| g.take()) {
             if self.embed.avail {
@@ -449,6 +454,17 @@ impl eframe::App for Shell {
         if on_tab && self.embed.active {
             ctx.request_repaint_after(std::time::Duration::from_millis(200));
         }
+    }
+}
+
+#[cfg(not(target_os = "android"))]
+impl eframe::App for Shell {
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.embed.shutdown();
+    }
+
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.ui(ctx);
     }
 }
 
@@ -896,6 +912,7 @@ fn augment_path() {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 pub fn run() -> eframe::Result<()> {
     install::print_banner();
 
@@ -930,6 +947,7 @@ pub fn run() -> eframe::Result<()> {
     )
 }
 
+#[cfg(not(target_os = "android"))]
 fn load_icon() -> egui::IconData {
     // Rasterise the v5 "cell" logo (three nested blobs) into a 128×128 icon.
     let size: usize = 128;
