@@ -375,37 +375,56 @@ impl Shell {
                 .inner_margin(Margin::symmetric(12.0, 6.0))
                 .stroke(Stroke::new(1.0, border())))
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    logo::widget(ui, 12.0);
-                    ui.add_space(5.0);
-                    ui.label(RichText::new("parasite").color(text_pri()).strong().size(15.0));
-                    ui.add_space(14.0);
-
-                    mode_tab(ui, &mut self.mode, AppMode::Graph, &format!("◇ {}", i18n::tr("tab.graph")));
-                    mode_tab(ui, &mut self.mode, AppMode::Geo, &format!("◎ {}", i18n::tr("tab.geo")));
-                    mode_tab(ui, &mut self.mode, AppMode::Monitor, &format!("◷ {}", i18n::tr("tab.monitor")));
-                    mode_tab(ui, &mut self.mode, AppMode::Dossier, &format!("▤ {}", i18n::tr("tab.dossier")));
-                    mode_tab(ui, &mut self.mode, AppMode::Cases, &format!("▦ {}", i18n::tr("tab.cases")));
-                    mode_tab(ui, &mut self.mode, AppMode::Watch, &format!("⊚ {}", i18n::tr("tab.watch")));
-                    mode_tab(ui, &mut self.mode, AppMode::Toolbox, &format!("⊞ {}", i18n::tr("tab.toolbox")));
-                    mode_tab(ui, &mut self.mode, AppMode::Browser, "⊕ ParasiteGoogle");
-
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let gear = ui.add(egui::Button::new(
-                            RichText::new(format!("⚙ {}", i18n::tr("shell.settings"))).color(text_sec()).size(12.0))
-                            .fill(Color32::TRANSPARENT).stroke(Stroke::new(1.0, border()))
-                            .rounding(Rounding::same(5.0)));
-                        if gear.hovered() { ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand); }
-                        if gear.clicked() { self.show_settings = !self.show_settings; }
-                        ui.add_space(8.0);
-                        if ui.add(egui::Button::new(RichText::new(format!("? {}", i18n::tr("shell.help"))).color(text_sec()).size(12.0))
-                            .fill(Color32::TRANSPARENT).stroke(Stroke::new(1.0, border()))
-                            .rounding(Rounding::same(5.0))).clicked()
-                        {
-                            self.settings.welcomed = false;
-                        }
+                let narrow = ui.available_width() < 620.0;
+                if narrow {
+                    // Phone / very narrow: brand + gear on top, tabs in a
+                    // horizontally-scrollable strip below.
+                    ui.horizontal(|ui| {
+                        logo::widget(ui, 11.0);
+                        ui.add_space(4.0);
+                        ui.label(RichText::new("parasite").color(text_pri()).strong().size(14.0));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let gear = ui.add(egui::Button::new(RichText::new("⚙").color(text_sec()).size(15.0))
+                                .fill(Color32::TRANSPARENT).stroke(Stroke::new(1.0, border()))
+                                .rounding(Rounding::same(5.0)));
+                            if gear.clicked() { self.show_settings = !self.show_settings; }
+                            ui.add_space(6.0);
+                            if ui.add(egui::Button::new(RichText::new("?").color(text_sec()).size(15.0))
+                                .fill(Color32::TRANSPARENT).stroke(Stroke::new(1.0, border()))
+                                .rounding(Rounding::same(5.0))).clicked()
+                            { self.settings.welcomed = false; }
+                        });
                     });
-                });
+                    ui.add_space(4.0);
+                    egui::ScrollArea::horizontal().auto_shrink([false, true]).show(ui, |ui| {
+                        ui.horizontal(|ui| { emit_mode_tabs(ui, &mut self.mode); });
+                    });
+                } else {
+                    ui.horizontal(|ui| {
+                        logo::widget(ui, 12.0);
+                        ui.add_space(5.0);
+                        ui.label(RichText::new("parasite").color(text_pri()).strong().size(15.0));
+                        ui.add_space(14.0);
+
+                        emit_mode_tabs(ui, &mut self.mode);
+
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let gear = ui.add(egui::Button::new(
+                                RichText::new(format!("⚙ {}", i18n::tr("shell.settings"))).color(text_sec()).size(12.0))
+                                .fill(Color32::TRANSPARENT).stroke(Stroke::new(1.0, border()))
+                                .rounding(Rounding::same(5.0)));
+                            if gear.hovered() { ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand); }
+                            if gear.clicked() { self.show_settings = !self.show_settings; }
+                            ui.add_space(8.0);
+                            if ui.add(egui::Button::new(RichText::new(format!("? {}", i18n::tr("shell.help"))).color(text_sec()).size(12.0))
+                                .fill(Color32::TRANSPARENT).stroke(Stroke::new(1.0, border()))
+                                .rounding(Rounding::same(5.0))).clicked()
+                            {
+                                self.settings.welcomed = false;
+                            }
+                        });
+                    });
+                }
             });
 
         match self.mode {
@@ -466,6 +485,17 @@ impl eframe::App for Shell {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.ui(ctx);
     }
+}
+
+fn emit_mode_tabs(ui: &mut egui::Ui, mode: &mut AppMode) {
+    mode_tab(ui, mode, AppMode::Graph, &format!("◇ {}", i18n::tr("tab.graph")));
+    mode_tab(ui, mode, AppMode::Geo, &format!("◎ {}", i18n::tr("tab.geo")));
+    mode_tab(ui, mode, AppMode::Monitor, &format!("◷ {}", i18n::tr("tab.monitor")));
+    mode_tab(ui, mode, AppMode::Dossier, &format!("▤ {}", i18n::tr("tab.dossier")));
+    mode_tab(ui, mode, AppMode::Cases, &format!("▦ {}", i18n::tr("tab.cases")));
+    mode_tab(ui, mode, AppMode::Watch, &format!("⊚ {}", i18n::tr("tab.watch")));
+    mode_tab(ui, mode, AppMode::Toolbox, &format!("⊞ {}", i18n::tr("tab.toolbox")));
+    mode_tab(ui, mode, AppMode::Browser, "⊕ ParasiteGoogle");
 }
 
 fn mode_tab(ui: &mut egui::Ui, mode: &mut AppMode, this: AppMode, label: &str) {

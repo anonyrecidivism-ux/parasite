@@ -93,6 +93,8 @@ package = "com.parasite.osint"
 build_targets = ["aarch64-linux-android"]
 apk_name = "parasite-osint"
 strip = "strip"
+# Launcher icon mipmaps (rasterised from assets/logo.svg) compiled by aapt.
+resources = "android-res"
 
 [package.metadata.android.sdk]
 min_sdk_version = 24
@@ -100,6 +102,7 @@ target_sdk_version = 34
 
 [package.metadata.android.application]
 label = "Parasite OSINT"
+icon = "@mipmap/ic_launcher"
 
 # Release signing. The keystore is local-only (self-signed) — generate your own
 # for distribution; never commit a production keystore.

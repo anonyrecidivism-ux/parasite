@@ -223,6 +223,8 @@ pub struct GraphPanel {
     risk_t:        f64,
     graph_filter:  String,
     show_help:     bool,
+    /// Mobile (touch) transform bottom-sheet visibility.
+    show_tf_sheet: bool,
 }
 
 /// Path of the autosaved session graph.
@@ -321,6 +323,7 @@ impl GraphPanel {
             risk_t: 0.0,
             graph_filter: String::new(),
             show_help: false,
+            show_tf_sheet: false,
         };
         s.log("◦  add an entity from the palette, then double-click it to run a transform");
         // restore the autosaved session if one exists
@@ -1238,6 +1241,20 @@ impl GraphPanel {
             self.cmd_query.clear();
         }
 
+        if Self::is_mobile(ctx) {
+            // Touch-first layout: full-screen canvas + a big bottom action bar and
+            // bottom-sheets, instead of the desktop's left/right side panels.
+            self.mobile_bottom_bar(ctx);
+            self.canvas_panel(ctx);
+            if self.recording.is_none() {
+                self.context_menu(ctx);
+                self.mobile_add_sheet(ctx);
+                self.mobile_transform_sheet(ctx);
+                self.help_window(ctx);
+            }
+            return;
+        }
+
         self.toolbar(ctx);
         self.palette(ctx);
         self.instinct_panel(ctx);
@@ -1256,6 +1273,160 @@ impl GraphPanel {
             self.command_palette(ctx);
             self.help_window(ctx);
             self.analytics_window(ctx);
+        }
+    }
+
+    /// Narrow viewport (a phone, or a very small desktop window) → touch layout.
+    fn is_mobile(ctx: &egui::Context) -> bool {
+        cfg!(target_os = "android") || ctx.screen_rect().width() < 620.0
+    }
+
+    /// The persistent bottom action bar shown in mobile layout.
+    fn mobile_bottom_bar(&mut self, ctx: &egui::Context) {
+        let has_sel = self.sel.primary.is_some();
+        let sel_label = self.sel.primary
+            .and_then(|id| self.graph.entities.get(&id))
+            .map(|e| format!("{}  ·  {}", e.kind.label(), e.value))
+            .unwrap_or_else(|| format!("{} nodes · {} links",
+                self.graph.entities.len(), self.graph.edges.len()));
+
+        egui::TopBottomPanel::bottom("mobile_bar")
+            .frame(egui::Frame::none().fill(bg_sidebar())
+                .inner_margin(Margin::symmetric(10.0, 8.0))
+                .stroke(Stroke::new(1.0, border())))
+            .show(ctx, |ui| {
+                // status / selection line
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(if has_sel { "◈" } else { "▦" })
+                        .color(accent()).size(14.0));
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(sel_label).color(text_sec()).size(12.5)
+                        .family(FontFamily::Proportional));
+                });
+                ui.add_space(6.0);
+
+                // big touch buttons
+                let bh = 46.0;
+                ui.horizontal(|ui| {
+                    let n = 4.0;
+                    let gap = ui.spacing().item_spacing.x * (n - 1.0);
+                    let bw = ((ui.available_width() - gap) / n).max(60.0);
+
+                    if mobile_btn(ui, [bw, bh], "＋", "Add", true) {
+                        self.show_add = false;
+                        self.show_tf_sheet = false;
+                        self.show_add = true;
+                    }
+                    if mobile_btn(ui, [bw, bh], "⚡", "Run", has_sel) {
+                        self.show_tf_sheet = true;
+                    }
+                    if mobile_btn(ui, [bw, bh], "⊹", "Fit", true) {
+                        self.needs_fit = true;
+                    }
+                    if mobile_btn(ui, [bw, bh], "☶", "Tidy", true) {
+                        self.record();
+                        canvas::auto_layout(&mut self.graph);
+                        self.needs_fit = true;
+                    }
+                });
+            });
+    }
+
+    /// Bottom-sheet: pick an entity kind to drop on the canvas.
+    fn mobile_add_sheet(&mut self, ctx: &egui::Context) {
+        if !self.show_add { return; }
+        let mut open = self.show_add;
+        let mut close = false;
+        mobile_sheet(ctx, "＋  Add entity", &mut open, |ui, panel| {
+            let cols = 2usize;
+            let gap = ui.spacing().item_spacing.x;
+            let bw = (panel.width() - gap) / cols as f32 - 1.0;
+            egui::Grid::new("m_add_grid").num_columns(cols).spacing([gap, 8.0]).show(ui, |ui| {
+                for (i, k) in Kind::ALL.iter().enumerate() {
+                    let label = format!("{}  {}", k.icon(), k.label());
+                    if ui.add_sized([bw, 44.0],
+                        egui::Button::new(RichText::new(label).color(text_pri()).size(14.0))
+                            .fill(bg_item_sel()).stroke(Stroke::new(1.0, k.color()))
+                            .rounding(Rounding::same(8.0))).clicked()
+                    {
+                        self.add_entity(*k, k.default_value().to_string());
+                        self.needs_fit = true;
+                        close = true;
+                    }
+                    if i % cols == cols - 1 { ui.end_row(); }
+                }
+            });
+            ui.add_space(4.0);
+            ui.label(RichText::new("Tip: tap a node to select it, then ⚡ Run to expand it.")
+                .color(text_mut()).size(11.5).italics());
+        });
+        self.show_add = open && !close;
+    }
+
+    /// Bottom-sheet: run a transform on the selected entity.
+    fn mobile_transform_sheet(&mut self, ctx: &egui::Context) {
+        if !self.show_tf_sheet { return; }
+        let Some(id) = self.sel.primary else { self.show_tf_sheet = false; return; };
+        let Some(ent) = self.graph.entities.get(&id) else { self.show_tf_sheet = false; return; };
+        let kind = ent.kind;
+        let value = ent.value.clone();
+
+        let mut to_run: Option<String> = None;
+        let mut run_all = false;
+        let mut do_delete = false;
+        let title = format!("⚡  {}  ·  {}", kind.label(), value);
+        let mut open = self.show_tf_sheet;
+        mobile_sheet(ctx, &title, &mut open, |ui, _panel| {
+            // value editor
+            ui.label(RichText::new("VALUE").color(text_mut()).size(10.0).strong());
+            if let Some(e) = self.graph.entities.get_mut(&id) {
+                ui.add(egui::TextEdit::singleline(&mut e.value)
+                    .desired_width(f32::INFINITY)
+                    .font(FontId::new(14.0, FontFamily::Monospace)));
+            }
+            ui.add_space(8.0);
+
+            let tfs = transforms::for_kind(kind);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("TRANSFORMS").color(text_mut()).size(10.0).strong());
+                ui.label(RichText::new(format!("({})", tfs.len())).color(text_mut()).size(10.0));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.add(egui::Button::new(RichText::new("Run all").color(accent()).size(12.0))
+                        .fill(Color32::TRANSPARENT).stroke(Stroke::new(1.0, accent_dark()))
+                        .rounding(Rounding::same(6.0))).clicked() { run_all = true; }
+                });
+            });
+            ui.add_space(4.0);
+
+            for t in &tfs {
+                let resp = ui.add_sized([ui.available_width(), 44.0],
+                    egui::Button::new(RichText::new(format!("{}", t.name)).color(text_pri()).size(14.0))
+                        .fill(bg_item_sel()).stroke(Stroke::new(1.0, border()))
+                        .rounding(Rounding::same(8.0)));
+                ui.label(RichText::new(t.desc).color(text_mut()).size(11.0));
+                ui.add_space(4.0);
+                if resp.clicked() { to_run = Some(t.id.to_string()); }
+            }
+            if tfs.is_empty() {
+                ui.label(RichText::new("No transforms for this entity kind.")
+                    .color(text_mut()).size(12.5).italics());
+            }
+            ui.add_space(8.0);
+            if ui.add_sized([ui.available_width(), 40.0],
+                egui::Button::new(RichText::new("🗑  Delete node").color(c_err()).size(13.5))
+                    .fill(Color32::TRANSPARENT).stroke(Stroke::new(1.0, c_err()))
+                    .rounding(Rounding::same(8.0))).clicked() { do_delete = true; }
+        });
+        self.show_tf_sheet = open;
+
+        if let Some(tid) = to_run { self.dispatch(id, &tid); }
+        if run_all {
+            let ids: Vec<String> = transforms::for_kind(kind).iter().map(|t| t.id.to_string()).collect();
+            for tid in ids { self.dispatch(id, &tid); }
+        }
+        if do_delete {
+            self.delete_selected();
+            self.show_tf_sheet = false;
         }
     }
 
@@ -3246,6 +3417,56 @@ pub(crate) fn native_open_file() -> Option<String> {
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 pub(crate) fn native_open_file() -> Option<String> {
     None
+}
+
+/// A big two-line (icon over label) touch button for the mobile bar.
+fn mobile_btn(ui: &mut egui::Ui, size: [f32; 2], icon: &str, label: &str, enabled: bool) -> bool {
+    let txt = egui::RichText::new(format!("{icon}\n{label}"))
+        .color(if enabled { text_pri() } else { text_mut() })
+        .size(13.0);
+    let btn = egui::Button::new(txt)
+        .fill(if enabled { bg_item_sel() } else { Color32::TRANSPARENT })
+        .stroke(Stroke::new(1.0, if enabled { accent_dark() } else { border() }))
+        .rounding(Rounding::same(8.0))
+        .wrap_mode(egui::TextWrapMode::Wrap)
+        .min_size(size.into());
+    let r = ui.add_enabled(enabled, btn);
+    if r.hovered() { ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand); }
+    r.clicked()
+}
+
+/// A bottom-anchored "sheet" overlay (the mobile equivalent of a side panel).
+fn mobile_sheet(
+    ctx: &egui::Context,
+    title: &str,
+    open: &mut bool,
+    add: impl FnOnce(&mut egui::Ui, egui::Rect),
+) {
+    let screen = ctx.screen_rect();
+    let w = (screen.width() - 16.0).min(560.0);
+    let max_h = screen.height() * 0.6;
+    let mut close = false;
+    egui::Window::new("")
+        .title_bar(false)
+        .anchor(egui::Align2::CENTER_BOTTOM, [0.0, -84.0])
+        .fixed_size([w, max_h])
+        .frame(egui::Frame::window(&ctx.style()).fill(bg_panel()).stroke(Stroke::new(1.0, accent_dark())))
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(title).color(text_pri()).strong().size(14.5));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.add(egui::Button::new(egui::RichText::new("✕").color(text_sec()).size(16.0))
+                        .fill(Color32::TRANSPARENT).stroke(Stroke::NONE)).clicked() { close = true; }
+                });
+            });
+            ui.separator();
+            egui::ScrollArea::vertical().max_height(max_h - 56.0).auto_shrink([false, true])
+                .show(ui, |ui| {
+                    let panel = ui.available_rect_before_wrap();
+                    add(ui, panel);
+                });
+        });
+    if close { *open = false; }
 }
 
 fn kind_from_name(name: &str) -> Option<Kind> {
