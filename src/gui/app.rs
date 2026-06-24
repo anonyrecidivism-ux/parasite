@@ -1279,9 +1279,11 @@ impl GraphPanel {
         }
     }
 
-    /// Narrow viewport (a phone, or a very small desktop window) → touch layout.
+    /// Narrow viewport (a portrait phone, or a very small desktop window) → the
+    /// touch bottom-sheet layout. In landscape there's room for the full desktop
+    /// graph workspace, which is what we want on a phone held sideways.
     fn is_mobile(ctx: &egui::Context) -> bool {
-        cfg!(target_os = "android") || ctx.screen_rect().width() < 620.0
+        ctx.screen_rect().width() < 720.0
     }
 
     /// The persistent bottom action bar shown in mobile layout.

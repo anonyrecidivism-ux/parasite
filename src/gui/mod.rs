@@ -862,33 +862,33 @@ impl Shell {
                 ui.painter().rect_filled(screen, Rounding::ZERO,
                     Color32::from_rgba_unmultiplied(8, 7, 6, 205));
 
-                // centred card
-                let cw = 560.0_f32;
-                let card = egui::Rect::from_min_size(
-                    egui::pos2(screen.center().x - cw / 2.0, screen.center().y - 250.0),
-                    egui::Vec2::new(cw, 500.0));
+                // centred card — clamped to the screen so it never overflows
+                // (important in landscape, where vertical space is tight)
+                let cw = (screen.width()  - 48.0).clamp(280.0, 600.0);
+                let ch = (screen.height() - 32.0).clamp(240.0, 470.0);
+                let card = egui::Rect::from_center_size(screen.center(), egui::Vec2::new(cw, ch));
                 let p = ui.painter();
-                p.rect_filled(card, Rounding::same(18.0), bg_panel());
-                p.rect_stroke(card, Rounding::same(18.0), Stroke::new(1.0, border()));
+                p.rect_filled(card, Rounding::same(16.0), bg_panel());
+                p.rect_stroke(card, Rounding::same(16.0), Stroke::new(1.0, border()));
                 // accent header strip
-                let strip = egui::Rect::from_min_size(card.min, egui::Vec2::new(cw, 5.0));
-                p.rect_filled(strip, Rounding { nw: 18.0, ne: 18.0, sw: 0.0, se: 0.0 }, accent());
+                let strip = egui::Rect::from_min_size(card.min, egui::Vec2::new(cw, 4.0));
+                p.rect_filled(strip, Rounding { nw: 16.0, ne: 16.0, sw: 0.0, se: 0.0 }, accent());
 
-                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(card.shrink2(egui::Vec2::new(40.0, 30.0))), |ui| {
+                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(card.shrink2(egui::Vec2::new(26.0, 18.0))), |ui| {
+                  egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                     ui.vertical_centered(|ui| {
-                        ui.add_space(8.0);
-                        logo::widget(ui, 40.0);
-                        ui.add_space(10.0);
+                        logo::widget(ui, 30.0);
+                        ui.add_space(6.0);
                         ui.horizontal(|ui| {
                             let w = ui.available_width();
-                            ui.add_space((w - 200.0).max(0.0) / 2.0);
-                            ui.label(RichText::new("parasite").color(text_pri()).strong().size(30.0));
-                            ui.label(RichText::new(".osint").color(accent()).strong().size(30.0));
+                            ui.add_space((w - 180.0).max(0.0) / 2.0);
+                            ui.label(RichText::new("parasite").color(text_pri()).strong().size(24.0));
+                            ui.label(RichText::new(".osint").color(accent()).strong().size(24.0));
                         });
                         ui.add_space(2.0);
                         ui.label(RichText::new(i18n::tr("wel.tagline"))
-                            .color(text_sec()).size(12.5));
-                        ui.add_space(20.0);
+                            .color(text_sec()).size(11.5));
+                        ui.add_space(14.0);
                     });
 
                     // three mode cards
@@ -933,6 +933,7 @@ impl Shell {
                         ui.label(RichText::new(format!("⚠  {}", i18n::tr("wel.warn")))
                             .color(text_mut()).size(10.5).italics());
                     });
+                  });
                 });
                 let _ = block;
             });

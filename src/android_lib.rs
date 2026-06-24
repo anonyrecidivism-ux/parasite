@@ -83,6 +83,19 @@ impl App {
     }
 
     fn redraw(&mut self) {
+        // Scale the UI to a comfortable logical width (~1100 pt) regardless of the
+        // screen's pixel density, so controls aren't gigantic on high-DPI phones.
+        if let Some(active) = self.active.as_ref() {
+            let size = active.window.inner_size();
+            let scale = active.window.scale_factor() as f32;
+            if size.width > 0 && scale > 0.0 {
+                let native_logical_w = size.width as f32 / scale;
+                let z = (native_logical_w / 1100.0).clamp(0.45, 1.3);
+                if (self.egui_ctx.zoom_factor() - z).abs() > 0.01 {
+                    self.egui_ctx.set_zoom_factor(z);
+                }
+            }
+        }
         self.update_insets();
         let Some(active) = self.active.as_mut() else { return };
         let window = active.window.clone();

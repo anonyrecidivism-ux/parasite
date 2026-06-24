@@ -107,6 +107,10 @@ icon = "@mipmap/ic_launcher"
 # reports proper safe-area insets (the app pads itself below the bars).
 theme = "@android:style/Theme.DeviceDefault.NoActionBar"
 
+# Run in landscape, like a game — the graph workspace needs the horizontal room.
+[package.metadata.android.application.activity]
+orientation = "landscape"
+
 # Release signing. The keystore is local-only (self-signed) — generate your own
 # for distribution; never commit a production keystore.
 [package.metadata.android.signing.release]
