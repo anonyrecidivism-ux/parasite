@@ -225,6 +225,8 @@ pub struct GraphPanel {
     show_help:     bool,
     /// Mobile (touch) transform bottom-sheet visibility.
     show_tf_sheet: bool,
+    /// Mobile add-sheet: user manually picked a kind (stop auto-detecting).
+    add_locked: bool,
 }
 
 /// Path of the autosaved session graph.
@@ -324,6 +326,7 @@ impl GraphPanel {
             graph_filter: String::new(),
             show_help: false,
             show_tf_sheet: false,
+            add_locked: false,
         };
         s.log("◦  add an entity from the palette, then double-click it to run a transform");
         // restore the autosaved session if one exists
@@ -1284,40 +1287,47 @@ impl GraphPanel {
     /// The persistent bottom action bar shown in mobile layout.
     fn mobile_bottom_bar(&mut self, ctx: &egui::Context) {
         let has_sel = self.sel.primary.is_some();
-        let sel_label = self.sel.primary
-            .and_then(|id| self.graph.entities.get(&id))
-            .map(|e| format!("{}  ·  {}", e.kind.label(), e.value))
-            .unwrap_or_else(|| format!("{} nodes · {} links",
-                self.graph.entities.len(), self.graph.edges.len()));
+        let running = self.running > 0;
+        // status line: running > selected entity > last log line > counts
+        let line = if running {
+            format!("↻  {}", self.status)
+        } else if let Some(e) = self.sel.primary.and_then(|id| self.graph.entities.get(&id)) {
+            format!("{}  ·  {}", e.kind.label(), e.value)
+        } else if let Some((l, _)) = self.log.last() {
+            l.clone()
+        } else {
+            format!("{} nodes · {} links · tap ＋ to add a target",
+                self.graph.entities.len(), self.graph.edges.len())
+        };
+        let line_col = if running { accent() } else { text_sec() };
 
         egui::TopBottomPanel::bottom("mobile_bar")
             .frame(egui::Frame::none().fill(bg_sidebar())
                 .inner_margin(Margin::symmetric(10.0, 8.0))
                 .stroke(Stroke::new(1.0, border())))
             .show(ctx, |ui| {
-                // status / selection line
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(if has_sel { "◈" } else { "▦" })
+                    ui.label(RichText::new(if running { "↻" } else if has_sel { "◈" } else { "▦" })
                         .color(accent()).size(14.0));
                     ui.add_space(4.0);
-                    ui.label(RichText::new(sel_label).color(text_sec()).size(12.5)
-                        .family(FontFamily::Proportional));
+                    ui.add(egui::Label::new(RichText::new(line).color(line_col).size(12.5)).truncate());
                 });
                 ui.add_space(6.0);
 
-                // big touch buttons
                 let bh = 46.0;
                 ui.horizontal(|ui| {
                     let n = 4.0;
                     let gap = ui.spacing().item_spacing.x * (n - 1.0);
                     let bw = ((ui.available_width() - gap) / n).max(60.0);
 
-                    if mobile_btn(ui, [bw, bh], "＋", "Add", true) {
-                        self.show_add = false;
+                    if mobile_btn(ui, [bw, bh], "＋", "Target", true) {
+                        self.new_value.clear();
+                        self.add_locked = false;
                         self.show_tf_sheet = false;
                         self.show_add = true;
                     }
-                    if mobile_btn(ui, [bw, bh], "⚡", "Run", has_sel) {
+                    if mobile_btn(ui, [bw, bh], "⚡", "Expand", has_sel) {
+                        self.show_add = false;
                         self.show_tf_sheet = true;
                     }
                     if mobile_btn(ui, [bw, bh], "⊹", "Fit", true) {
@@ -1332,35 +1342,77 @@ impl GraphPanel {
             });
     }
 
-    /// Bottom-sheet: pick an entity kind to drop on the canvas.
+    /// Bottom-sheet: type a target; the entity kind is auto-detected (and can be
+    /// overridden by tapping a chip). One tap drops it on the graph, ready to run.
     fn mobile_add_sheet(&mut self, ctx: &egui::Context) {
         if !self.show_add { return; }
         let mut open = self.show_add;
-        let mut close = false;
-        mobile_sheet(ctx, "＋  Add entity", &mut open, |ui, panel| {
-            let cols = 2usize;
-            let gap = ui.spacing().item_spacing.x;
-            let bw = (panel.width() - gap) / cols as f32 - 1.0;
-            egui::Grid::new("m_add_grid").num_columns(cols).spacing([gap, 8.0]).show(ui, |ui| {
-                for (i, k) in Kind::ALL.iter().enumerate() {
-                    let label = format!("{}  {}", k.icon(), k.label());
-                    if ui.add_sized([bw, 44.0],
-                        egui::Button::new(RichText::new(label).color(text_pri()).size(14.0))
-                            .fill(bg_item_sel()).stroke(Stroke::new(1.0, k.color()))
-                            .rounding(Rounding::same(8.0))).clicked()
-                    {
-                        self.add_entity(*k, k.default_value().to_string());
-                        self.needs_fit = true;
-                        close = true;
-                    }
-                    if i % cols == cols - 1 { ui.end_row(); }
-                }
+        let mut added = false;
+        mobile_sheet(ctx, "＋  New target", &mut open, |ui, _panel| {
+            ui.label(RichText::new("TARGET").color(text_mut()).size(10.0).strong());
+            ui.add_space(3.0);
+            let te = ui.add(egui::TextEdit::singleline(&mut self.new_value)
+                .hint_text("domain · email · phone · ip · username · @social…")
+                .desired_width(f32::INFINITY)
+                .font(FontId::new(16.0, FontFamily::Monospace)));
+            // auto-focus the field when the sheet opens
+            if !te.has_focus() && self.new_value.is_empty() { te.request_focus(); }
+
+            // live auto-detection unless the user pinned a kind
+            if !self.add_locked {
+                self.new_kind = guess_kind(&self.new_value);
+            }
+
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("TYPE").color(text_mut()).size(10.0).strong());
+                ui.label(RichText::new(if self.add_locked { "(pinned)" } else { "(auto)" })
+                    .color(text_mut()).size(10.0));
             });
+            ui.add_space(3.0);
+            // chips: the most useful OSINT kinds first
+            const CHIPS: &[Kind] = &[
+                Kind::Domain, Kind::Website, Kind::Ip, Kind::Email, Kind::Phone,
+                Kind::Username, Kind::Person, Kind::Social, Kind::Organization,
+                Kind::Hash, Kind::BtcAddress, Kind::EthAddress, Kind::Cve, Kind::Asn,
+                Kind::Netblock, Kind::Location, Kind::MacAddress, Kind::File,
+            ];
+            egui::ScrollArea::horizontal().id_salt("add_chips").auto_shrink([false, true])
+                .max_height(40.0).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    for k in CHIPS {
+                        let on = self.new_kind == *k;
+                        let chip = egui::Button::new(RichText::new(format!("{} {}", k.icon(), k.label()))
+                            .color(if on { Color32::WHITE } else { text_sec() }).size(12.5))
+                            .fill(if on { k.color() } else { bg_item_sel() })
+                            .stroke(Stroke::new(1.0, if on { k.color() } else { border() }))
+                            .rounding(Rounding::same(14.0));
+                        if ui.add(chip).clicked() { self.new_kind = *k; self.add_locked = true; }
+                    }
+                });
+            });
+
+            ui.add_space(12.0);
+            let ready = !self.new_value.trim().is_empty();
+            let add = ui.add_enabled(ready, egui::Button::new(
+                RichText::new(format!("＋  Add {} to graph", self.new_kind.label()))
+                    .color(Color32::WHITE).size(15.0).strong())
+                .fill(accent()).rounding(Rounding::same(10.0))
+                .min_size(egui::vec2(ui.available_width(), 48.0)));
+            let enter = ready && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if add.clicked() || enter {
+                let val = self.new_value.trim().to_string();
+                let id = self.add_entity(self.new_kind, val);
+                self.sel.select_one(id);
+                self.needs_fit = true;
+                added = true;
+            }
             ui.add_space(4.0);
-            ui.label(RichText::new("Tip: tap a node to select it, then ⚡ Run to expand it.")
+            ui.label(RichText::new("Then tap the node and ⚡ Expand to run transforms.")
                 .color(text_mut()).size(11.5).italics());
         });
-        self.show_add = open && !close;
+        if added { self.new_value.clear(); self.show_add = false; }
+        else { self.show_add = open; }
     }
 
     /// Bottom-sheet: run a transform on the selected entity.
