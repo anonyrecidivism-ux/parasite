@@ -34,13 +34,16 @@ struct App {
     shell:    gui::Shell,
     painter:  egui_wgpu::winit::Painter,
     active:   Option<Active>,
+    android:  AndroidApp,
+    /// Whether the soft keyboard is currently requested (so we only toggle on change).
+    kb_open:  bool,
     /// A tokio runtime kept alive for the whole session so transforms that need
     /// an async context have one (the GUI spawns work onto it).
     _rt:      tokio::runtime::Runtime,
 }
 
 impl App {
-    fn new() -> Self {
+    fn new(android: AndroidApp) -> Self {
         let egui_ctx = egui::Context::default();
         let shell = gui::Shell::build(&egui_ctx);
 
@@ -57,10 +60,30 @@ impl App {
             .build()
             .expect("tokio runtime");
 
-        Self { egui_ctx, shell, painter, active: None, _rt: rt }
+        Self { egui_ctx, shell, painter, active: None, android, kb_open: false, _rt: rt }
+    }
+
+    /// Feed the egui side the current safe-area insets (status bar / nav bar / IME)
+    /// so the UI never draws under the system bars.
+    fn update_insets(&self) {
+        let Some(active) = self.active.as_ref() else { return };
+        let cr = self.android.content_rect(); // physical px, area free of system UI
+        let size = active.window.inner_size();
+        let ppp = self.egui_ctx.pixels_per_point().max(0.5);
+        // Only trust a sane, non-empty rect.
+        if cr.right > cr.left && cr.bottom > cr.top
+            && cr.right as u32 <= size.width && cr.bottom as u32 <= size.height
+        {
+            let top    = (cr.top.max(0) as f32) / ppp;
+            let bottom = ((size.height as i32 - cr.bottom).max(0) as f32) / ppp;
+            gui::set_insets(top, bottom);
+        } else {
+            gui::set_insets(0.0, 0.0);
+        }
     }
 
     fn redraw(&mut self) {
+        self.update_insets();
         let Some(active) = self.active.as_mut() else { return };
         let window = active.window.clone();
 
@@ -69,6 +92,15 @@ impl App {
             self.shell.ui(ctx);
         });
         active.state.handle_platform_output(&window, full.platform_output.clone());
+
+        // Bring the soft keyboard up/down to match what egui wants (egui-winit
+        // does not do this for us on Android).
+        let want_kb = self.egui_ctx.wants_keyboard_input();
+        if want_kb != self.kb_open {
+            if want_kb { self.android.show_soft_input(true); }
+            else       { self.android.hide_soft_input(true); }
+            self.kb_open = want_kb;
+        }
 
         let primitives = self.egui_ctx.tessellate(full.shapes, full.pixels_per_point);
         self.painter.paint_and_update_textures(
@@ -156,11 +188,11 @@ fn android_main(app: AndroidApp) {
     log::info!("parasite: android_main starting");
 
     let event_loop = EventLoop::builder()
-        .with_android_app(app)
+        .with_android_app(app.clone())
         .build()
         .expect("event loop");
 
-    let mut state = App::new();
+    let mut state = App::new(app);
     if let Err(e) = event_loop.run_app(&mut state) {
         log::error!("parasite: event loop ended: {e}");
     }

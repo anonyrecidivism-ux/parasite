@@ -103,6 +103,9 @@ target_sdk_version = 34
 [package.metadata.android.application]
 label = "Parasite OSINT"
 icon = "@mipmap/ic_launcher"
+# A normal (non-fullscreen) theme so the status bar stays visible and the system
+# reports proper safe-area insets (the app pads itself below the bars).
+theme = "@android:style/Theme.DeviceDefault.NoActionBar"
 
 # Release signing. The keystore is local-only (self-signed) — generate your own
 # for distribution; never commit a production keystore.

@@ -119,14 +119,25 @@ pub fn draw(
         }
     }
 
-    // ── Zoom around the cursor ────────────────────────────────────────────────
-    if response.hovered() {
+    // ── Pinch-zoom + two-finger pan (touch), else wheel-zoom (desktop) ─────────
+    let mt = ui.input(|i| i.multi_touch());
+    let multitouch = mt.is_some();
+    if let Some(mt) = mt {
+        let focus = ui.input(|i| i.pointer.hover_pos())
+            .or_else(|| ui.input(|i| i.pointer.interact_pos()))
+            .unwrap_or(center);
+        let before = view.s2w(center, focus);
+        view.zoom = (view.zoom * mt.zoom_delta).clamp(0.08, 4.0);
+        let after = view.s2w(center, focus);
+        view.pan += (after - before) * view.zoom;
+        view.pan += mt.translation_delta; // drag the whole canvas with two fingers
+    } else if response.hovered() {
         let scroll = ui.input(|i| i.smooth_scroll_delta.y);
         if scroll.abs() > 0.0 {
             if let Some(ptr) = ui.input(|i| i.pointer.hover_pos()) {
                 let before = view.s2w(center, ptr);
                 let factor = (scroll * 0.0015).exp();
-                view.zoom = (view.zoom * factor).clamp(0.12, 3.0);
+                view.zoom = (view.zoom * factor).clamp(0.08, 4.0);
                 let after = view.s2w(center, ptr);
                 view.pan += (after - before) * view.zoom;
             }
@@ -158,7 +169,9 @@ pub fn draw(
     }
 
     // ── Apply drag ─────────────────────────────────────────────────────────────
-    if response.dragged() {
+    // While a pinch is in progress the single-finger drag is suppressed so nodes
+    // don't fly around and the canvas doesn't fight the gesture.
+    if response.dragged() && !multitouch {
         let delta = response.drag_delta();
         if view.linking_from.is_some() {
             // linking: rubber band is drawn below; nothing moves

@@ -35,6 +35,16 @@ use theme::*;
 #[derive(Clone, Copy, PartialEq)]
 enum AppMode { Graph, Geo, Monitor, Dossier, Cases, Watch, Toolbox, Browser }
 
+/// Safe-area insets in egui points (top = status bar / cutout, bottom = nav bar
+/// or on-screen keyboard). Set by the Android entry point each frame; always
+/// (0, 0) on desktop.
+static INSETS: std::sync::Mutex<(f32, f32)> = std::sync::Mutex::new((0.0, 0.0));
+
+pub fn set_insets(top: f32, bottom: f32) {
+    if let Ok(mut g) = INSETS.lock() { *g = (top, bottom); }
+}
+fn insets() -> (f32, f32) { INSETS.lock().map(|g| *g).unwrap_or((0.0, 0.0)) }
+
 pub struct Shell {
     mode:          AppMode,
     graph:         app::GraphPanel,
@@ -362,6 +372,18 @@ impl Shell {
     /// One UI frame. Frame-agnostic so both eframe (desktop) and the Android
     /// winit/wgpu loop can drive it with the same egui context.
     pub fn ui(&mut self, ctx: &egui::Context) {
+        // Reserve the system safe-area (status bar at top, nav bar / keyboard at
+        // bottom) so no content is hidden under the system bars (Android).
+        let (inset_top, inset_bottom) = insets();
+        if inset_top > 0.5 {
+            egui::TopBottomPanel::top("inset_top").exact_height(inset_top)
+                .frame(egui::Frame::none().fill(bg_sidebar())).show(ctx, |_| {});
+        }
+        if inset_bottom > 0.5 {
+            egui::TopBottomPanel::bottom("inset_bottom").exact_height(inset_bottom)
+                .frame(egui::Frame::none().fill(bg_sidebar())).show(ctx, |_| {});
+        }
+
         // a link/search was triggered → switch to the browser tab and open it
         if let Some(_url) = pending_open().lock().ok().and_then(|mut g| g.take()) {
             if self.embed.avail {
