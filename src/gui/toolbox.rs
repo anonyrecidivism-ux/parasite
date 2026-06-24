@@ -43,7 +43,7 @@ impl ToolboxPanel {
 
     pub fn ui(&mut self, ctx: &egui::Context) {
         egui::SidePanel::left("toolbox_tools")
-            .resizable(false).default_width(190.0)
+            .resizable(true).default_width(168.0).width_range(150.0..=240.0)
             .frame(egui::Frame::none().fill(bg_sidebar()).inner_margin(Margin::same(10.0)))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {

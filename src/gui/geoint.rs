@@ -259,7 +259,7 @@ impl GeoPanel {
     }
 
     fn sidebar(&mut self, ctx: &egui::Context) {
-        egui::SidePanel::left("geo_side").resizable(true).default_width(230.0).width_range(180.0..=340.0)
+        egui::SidePanel::left("geo_side").resizable(true).default_width(190.0).width_range(160.0..=340.0)
             .frame(egui::Frame::none().fill(bg_sidebar()).inner_margin(Margin::symmetric(12.0, 10.0)))
             .show(ctx, |ui| {
                 ui.label(RichText::new("ADD POINT").color(text_mut()).size(10.0).strong());
@@ -324,7 +324,7 @@ impl GeoPanel {
     }
 
     fn details(&mut self, ctx: &egui::Context) {
-        egui::SidePanel::right("geo_details").resizable(true).default_width(270.0).width_range(200.0..=420.0)
+        egui::SidePanel::right("geo_details").resizable(true).default_width(224.0).width_range(190.0..=420.0)
             .frame(egui::Frame::none().fill(bg_panel()).inner_margin(Margin::symmetric(14.0, 12.0)))
             .show(ctx, |ui| {
                 let Some(i) = self.selected else {

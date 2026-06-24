@@ -602,7 +602,7 @@ impl DossierPanel {
         let mut clear = false;
         let mut quick: Option<&str> = None;
         egui::SidePanel::right("dossier_chat")
-            .resizable(true).default_width(330.0).width_range(260.0..=460.0)
+            .resizable(true).default_width(286.0).width_range(240.0..=460.0)
             .frame(egui::Frame::none().fill(bg_panel()).stroke(Stroke::new(1.0, border())))
             .show(ctx, |ui| {
                 // header

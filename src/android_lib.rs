@@ -90,7 +90,9 @@ impl App {
             let scale = active.window.scale_factor() as f32;
             if size.width > 0 && scale > 0.0 {
                 let native_logical_w = size.width as f32 / scale;
-                let z = (native_logical_w / 1100.0).clamp(0.45, 1.3);
+                // Higher target width ⇒ denser, smaller UI. 1400pt gives a compact,
+                // desktop-like density that fits all modes in landscape.
+                let z = (native_logical_w / 1400.0).clamp(0.4, 1.3);
                 if (self.egui_ctx.zoom_factor() - z).abs() > 0.01 {
                     self.egui_ctx.set_zoom_factor(z);
                 }
