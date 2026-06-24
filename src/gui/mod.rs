@@ -449,6 +449,10 @@ impl Shell {
                 }
             });
 
+        // No embedded browser on Android — never land on that tab.
+        #[cfg(target_os = "android")]
+        if self.mode == AppMode::Browser { self.mode = AppMode::Graph; }
+
         match self.mode {
             AppMode::Graph   => self.graph.ui(ctx),
             AppMode::Geo     => self.geo.ui(ctx),
@@ -517,6 +521,8 @@ fn emit_mode_tabs(ui: &mut egui::Ui, mode: &mut AppMode) {
     mode_tab(ui, mode, AppMode::Cases, &format!("▦ {}", i18n::tr("tab.cases")));
     mode_tab(ui, mode, AppMode::Watch, &format!("⊚ {}", i18n::tr("tab.watch")));
     mode_tab(ui, mode, AppMode::Toolbox, &format!("⊞ {}", i18n::tr("tab.toolbox")));
+    // ParasiteGoogle is a real WebKitGTK browser — desktop only. Hidden on Android.
+    #[cfg(not(target_os = "android"))]
     mode_tab(ui, mode, AppMode::Browser, "⊕ ParasiteGoogle");
 }
 

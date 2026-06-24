@@ -98,11 +98,13 @@ resources = "android-res"
 
 [package.metadata.android.sdk]
 min_sdk_version = 24
-target_sdk_version = 34
+target_sdk_version = 35
 
 [package.metadata.android.application]
 label = "Parasite OSINT"
 icon = "@mipmap/ic_launcher"
+# Many OSINT targets are plain http:// — allow cleartext so those transforms work.
+uses_cleartext_traffic = true
 # A normal (non-fullscreen) theme so the status bar stays visible and the system
 # reports proper safe-area insets (the app pads itself below the bars).
 theme = "@android:style/Theme.DeviceDefault.NoActionBar"
@@ -110,6 +112,7 @@ theme = "@android:style/Theme.DeviceDefault.NoActionBar"
 # Run in landscape, like a game — the graph workspace needs the horizontal room.
 [package.metadata.android.application.activity]
 orientation = "landscape"
+exported = true
 
 # Release signing. The keystore is local-only (self-signed) — generate your own
 # for distribution; never commit a production keystore.

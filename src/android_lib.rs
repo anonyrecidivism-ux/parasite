@@ -37,6 +37,8 @@ struct App {
     android:  AndroidApp,
     /// Whether the soft keyboard is currently requested (so we only toggle on change).
     kb_open:  bool,
+    /// Debounce counter for hiding the keyboard (avoids flicker between fields).
+    kb_pending: u8,
     /// A tokio runtime kept alive for the whole session so transforms that need
     /// an async context have one (the GUI spawns work onto it).
     _rt:      tokio::runtime::Runtime,
@@ -60,7 +62,7 @@ impl App {
             .build()
             .expect("tokio runtime");
 
-        Self { egui_ctx, shell, painter, active: None, android, kb_open: false, _rt: rt }
+        Self { egui_ctx, shell, painter, active: None, android, kb_open: false, kb_pending: 0, _rt: rt }
     }
 
     /// Feed the egui side the current safe-area insets (status bar / nav bar / IME)
@@ -108,13 +110,23 @@ impl App {
         });
         active.state.handle_platform_output(&window, full.platform_output.clone());
 
-        // Bring the soft keyboard up/down to match what egui wants (egui-winit
-        // does not do this for us on Android).
+        // Bring the soft keyboard up/down to match egui's keyboard focus (egui-winit
+        // does not do this on Android). Show immediately, but hide only after a few
+        // stable frames so moving focus between fields doesn't make it flicker.
         let want_kb = self.egui_ctx.wants_keyboard_input();
-        if want_kb != self.kb_open {
-            if want_kb { self.android.show_soft_input(true); }
-            else       { self.android.hide_soft_input(true); }
-            self.kb_open = want_kb;
+        if want_kb && !self.kb_open {
+            self.android.show_soft_input(false);
+            self.kb_open = true;
+            self.kb_pending = 0;
+        } else if !want_kb && self.kb_open {
+            self.kb_pending += 1;
+            if self.kb_pending >= 6 {
+                self.android.hide_soft_input(false);
+                self.kb_open = false;
+                self.kb_pending = 0;
+            }
+        } else {
+            self.kb_pending = 0;
         }
 
         let primitives = self.egui_ctx.tessellate(full.shapes, full.pixels_per_point);
